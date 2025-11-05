@@ -1,0 +1,37 @@
+{
+  "name": "booze-core-local-printer",
+  "version": "1.0.0",
+  "description": "Local print agent for booze-core",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "author": "R-Nexus",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.400.0",
+    "axios": "^1.6.0",
+    "pdf-to-printer": "^5.6.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.8.0"
+  },
+  "build": {
+    "appId": "ai.r-nexus.booz-core-ai",
+    "productName": "BZCorePrinter",
+    "files": [
+      "**/*"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  }
+}

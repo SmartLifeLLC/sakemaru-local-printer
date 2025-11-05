@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8" />
+    <title>BZCore Printer</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        button, select, input { margin: 5px 0; width: 100%; }
+    </style>
+</head>
+<body>
+<h2>プリンタ一覧取得</h2>
+<button id="btn-load">LOAD PRINTERS</button>
+<select id="printer-list"></select>
+
+<h2>SYNC</h2>
+<button id="btn-sync">SYNC PRINTER LIST</button>
+
+<h2>PRINT TEST</h2>
+<input type="text" id="manual-file" placeholder="PDFパスを入力" value="path/to/sample.pdf"/>
+<button id="btn-print">PRINT</button>
+
+<script src="renderer.js"></script>
+</body>
+</html>

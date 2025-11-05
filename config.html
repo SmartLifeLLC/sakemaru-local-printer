@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+
+      <title>設定</title>
+  <style>body{font-family:sans-serif;padding:16px;}label,fieldset{display:block;margin-bottom:8px;}</style>
+</head>
+<body>
+<h1>設定</h1>
+<label>ポーリング間隔 (ms):
+  <input type="number" id="cfg-pollInterval"/>
+</label>
+<label>取得 API アドレス:
+  <input type="text" id="cfg-apiAddress" size="50"/>
+</label>
+<label>SYNC API アドレス:
+  <input type="text" id="cfg-syncApiAddress" size="50"/>
+</label>
+<fieldset>
+  <legend>S3設定</legend>
+  <label>Bucket:
+    <input type="text" id="cfg-s3-bucket"/>
+  </label>
+  <label>Region:
+    <input type="text" id="cfg-s3-region"/>
+  </label>
+  <label>AccessKeyId:
+    <input type="text" id="cfg-s3-accessKeyId"/>
+  </label>
+  <label>SecretAccessKey:
+    <input type="password" id="cfg-s3-secretAccessKey"/>
+  </label>
+</fieldset>
+<button id="btn-save-config">保存</button>
+
+<script src="renderer.js"></script>
+</body>
+</html>
+</title>
+</head>
+<body>
+
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "pollInterval": 5000,
+  "apiAddress": "https://your-api-endpoint.com/api/printer/tasks",
+  "syncApiAddress": "https://your-api-endpoint.com/api/printer/sync",
+  "s3": {
+    "bucket": "your-s3-bucket-name",
+    "region": "ap-northeast-1",
+    "accessKeyId": "YOUR_AWS_ACCESS_KEY_ID",
+    "secretAccessKey": "YOUR_AWS_SECRET_ACCESS_KEY"
+  }
+}
