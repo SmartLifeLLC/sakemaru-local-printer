@@ -1,6 +1,6 @@
 {
   "pollInterval": 5000,
-  "apiAddress": "https://sakemaru-ai-hub.test/api/printer/tasks",
+  "apiHost": "sakemaru-ai-hub.test",
   "apiToken": "",
   "printer0": "",
   "printer1": "",

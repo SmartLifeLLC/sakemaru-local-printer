@@ -1,7 +1,7 @@
 // main.js
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-const { app, BrowserWindow, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -9,8 +9,39 @@ const fetch = global.fetch; // Node18+ のグローバル fetch
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { exec } = require('child_process');
 const printerLib = require('pdf-to-printer'); // 追加が必要
+const AutoLaunch = require('auto-launch');
+
 // アプリケーション名を設定
 app.name = 'Sakemaru';
+
+// シングルインスタンスロック
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+    // 既に別のインスタンスが起動している場合、このインスタンスを終了
+    console.log('Another instance is already running. Quitting...');
+    app.quit();
+} else {
+    // 2つ目のインスタンスが起動しようとした場合の処理
+    app.on('second-instance', (event, commandLine, workingDirectory) => {
+        console.log('Second instance detected. Focusing existing window...');
+        // 既存のウィンドウがある場合、それを表示してフォーカス
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            mainWindow.focus();
+        } else {
+            // ウィンドウがない場合は作成
+            createMainWindow();
+        }
+    });
+}
+
+// 自動起動設定
+const autoLauncher = new AutoLaunch({
+    name: 'Sakemaru',
+    path: app.getPath('exe'),
+});
 
 // 設定ファイルパス
 const configPath = path.join(__dirname, 'config.json');
@@ -20,6 +51,7 @@ let mainWindow;
 let configWindow;
 let statusWindow;
 let pollingTimer = null;
+let tray = null;
 
 // ログファイル管理
 const logsDir = path.join(app.getPath('userData'), 'logs');
@@ -143,12 +175,34 @@ async function pollTask() {
             headers['Authorization'] = `Bearer ${config.apiToken}`;
         }
 
-        const res = await fetch(config.apiAddress, {
+        // APIエンドポイントを構築
+        const apiUrl = `https://${config.apiHost}/api/printer/tasks`;
+
+        const requestBody = { printer_pc_id: ip };
+        console.log('Polling API:', apiUrl);
+        console.log('Request body:', JSON.stringify(requestBody));
+        console.log('Request headers:', headers);
+
+        const res = await fetch(apiUrl, {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify({ printer_pc_id: ip })
+            body: JSON.stringify(requestBody)
         });
-        if (!res.ok) throw new Error(`Status ${res.status}`);
+
+        if (!res.ok) {
+            // エラーレスポンスの詳細を取得
+            let errorDetail = '';
+            try {
+                const errorBody = await res.text();
+                errorDetail = errorBody ? ` - ${errorBody}` : '';
+                writeLog(`API エラー詳細: ${errorBody}`, 'error');
+                console.error('API Error Response Body:', errorBody);
+            } catch (e) {
+                console.error('Failed to read error body:', e);
+            }
+            throw new Error(`HTTP ${res.status} ${res.statusText}${errorDetail}`);
+        }
+
         const data = await res.json();
         if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data });
 
@@ -227,8 +281,9 @@ async function pollTask() {
             if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'printed' });
         }
     } catch (err) {
-        writeLog(`ポーリングエラー: ${err.message}`, 'error');
-        if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'error', error: err.message });
+        const errorMessage = err?.message || err?.toString() || '不明なエラー';
+        writeLog(`ポーリングエラー: ${errorMessage}`, 'error');
+        console.error('Poll task error:', err);
     }
 }
 
@@ -241,6 +296,8 @@ async function pollLoop() {
     try {
         await pollTask();
     } catch (err) {
+        const errorMessage = err?.message || err?.toString() || '不明なエラー';
+        writeLog(`ポーリングループエラー: ${errorMessage}`, 'error');
         console.error('Poll loop error:', err);
     }
 
@@ -255,6 +312,7 @@ function startPolling() {
     isPolling = true;
     console.log('Starting polling...');
     pollLoop();
+    updateTrayMenu(); // トレイメニューを更新
 }
 
 function stopPolling() {
@@ -265,6 +323,7 @@ function stopPolling() {
         pollingTimer = null;
     }
     console.log('Polling stopped');
+    updateTrayMenu(); // トレイメニューを更新
 }
 
 // ウィンドウ生成
@@ -276,7 +335,7 @@ function createMainWindow() {
     }
     mainWindow = new BrowserWindow({
         width: 1000,
-        height: 750,
+        height: 800,
         icon: path.join(__dirname, 'logo.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -285,6 +344,16 @@ function createMainWindow() {
         }
     });
     mainWindow.loadFile('index.html');
+
+    // ウィンドウを閉じる際、非表示にするだけで終了しない
+    mainWindow.on('close', (event) => {
+        if (!app.isQuitting) {
+            event.preventDefault();
+            mainWindow.hide();
+            return false;
+        }
+    });
+
     mainWindow.on('closed', () => mainWindow = null);
 
     // 右クリックメニュー（コンテキストメニュー）を有効化
@@ -340,6 +409,132 @@ function createStatusWindow() {
     statusWindow.on('closed', () => statusWindow = null);
 }
 
+// システムトレイの作成
+function createTray() {
+    // トレイアイコンの作成（logo.pngを使用、なければデフォルト）
+    const iconPath = path.join(__dirname, 'logo.png');
+    let trayIcon;
+
+    if (fs.existsSync(iconPath)) {
+        trayIcon = nativeImage.createFromPath(iconPath);
+        // Windows用にアイコンをリサイズ
+        trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    }
+
+    tray = new Tray(trayIcon || nativeImage.createEmpty());
+
+    // トレイアイコンのツールチップ
+    tray.setToolTip('Sakemaru 印刷システム');
+
+    // トレイメニューの作成
+    const contextMenu = Menu.buildFromTemplate([
+        {
+            label: 'ウィンドウを表示',
+            click: () => {
+                if (mainWindow) {
+                    mainWindow.show();
+                    mainWindow.focus();
+                } else {
+                    createMainWindow();
+                }
+            }
+        },
+        { type: 'separator' },
+        {
+            label: isPolling ? 'ポーリング停止' : 'ポーリング開始',
+            id: 'polling-toggle',
+            click: () => {
+                if (isPolling) {
+                    stopPolling();
+                    writeLog('ポーリングを停止しました（トレイメニューから）', 'info');
+                } else {
+                    startPolling();
+                    writeLog('ポーリングを開始しました（トレイメニューから）', 'success');
+                }
+                updateTrayMenu();
+            }
+        },
+        { type: 'separator' },
+        {
+            label: '終了',
+            click: () => {
+                app.isQuitting = true;
+                app.quit();
+            }
+        }
+    ]);
+
+    tray.setContextMenu(contextMenu);
+
+    // トレイアイコンをクリックでウィンドウ表示/非表示
+    tray.on('click', () => {
+        if (mainWindow) {
+            if (mainWindow.isVisible()) {
+                mainWindow.hide();
+            } else {
+                mainWindow.show();
+                mainWindow.focus();
+            }
+        } else {
+            createMainWindow();
+        }
+    });
+}
+
+// トレイメニューを更新
+function updateTrayMenu() {
+    if (!tray) return;
+
+    const contextMenu = Menu.buildFromTemplate([
+        {
+            label: 'ウィンドウを表示',
+            click: () => {
+                if (mainWindow) {
+                    mainWindow.show();
+                    mainWindow.focus();
+                } else {
+                    createMainWindow();
+                }
+            }
+        },
+        { type: 'separator' },
+        {
+            label: isPolling ? 'ポーリング停止' : 'ポーリング開始',
+            click: () => {
+                if (isPolling) {
+                    stopPolling();
+                    writeLog('ポーリングを停止しました（トレイメニューから）', 'info');
+                } else {
+                    startPolling();
+                    writeLog('ポーリングを開始しました（トレイメニューから）', 'success');
+                }
+                updateTrayMenu();
+            }
+        },
+        { type: 'separator' },
+        {
+            label: '終了',
+            click: () => {
+                app.isQuitting = true;
+                app.quit();
+            }
+        }
+    ]);
+
+    tray.setContextMenu(contextMenu);
+}
+
+// 起動時の設定チェック関数
+function checkAutoStartConditions() {
+    // プリンター設定チェック（少なくとも1つのプリンターが設定されているか）
+    const hasPrinter = config.printer0 || config.printer1 || config.printer2 || config.printer3;
+
+    // API設定チェック
+    const hasApiHost = config.apiHost && config.apiHost.trim() !== '';
+
+    return hasPrinter && hasApiHost;
+}
+
 // メニューバー設定 & アプリ起動
 app.whenReady().then(() => {
     const template = [
@@ -365,12 +560,57 @@ app.whenReady().then(() => {
         }
     ];
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+
+    // システムトレイを作成
+    createTray();
+
     // 初回表示
     createMainWindow();
+
+    // Windows自動起動の設定（ビルド済みアプリのみ）
+    if (app.isPackaged) {
+        autoLauncher.isEnabled().then((isEnabled) => {
+            if (!isEnabled) {
+                autoLauncher.enable().then(() => {
+                    console.log('Auto-launch enabled');
+                    writeLog('Windows起動時の自動起動を有効にしました', 'info');
+                }).catch((err) => {
+                    console.error('Failed to enable auto-launch:', err);
+                });
+            } else {
+                console.log('Auto-launch already enabled');
+            }
+        }).catch((err) => {
+            console.error('Failed to check auto-launch status:', err);
+        });
+    }
+
+    // 起動時の自動ポーリング開始チェック
+    if (checkAutoStartConditions()) {
+        writeLog('設定が正常です。ポーリングを自動開始します', 'info');
+        // ウィンドウ作成後、少し待ってからポーリング開始
+        setTimeout(() => {
+            startPolling();
+            writeLog('ポーリングを開始しました', 'success');
+        }, 1000);
+    } else {
+        writeLog('プリンターまたはAPI設定が不足しています。設定を確認してください', 'error');
+    }
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+// すべてのウィンドウが閉じられても、バックグラウンドで動作を継続
+app.on('window-all-closed', (event) => {
+    // macOSでも終了しないように変更
+    // バックグラウンドでポーリングを継続
+    event.preventDefault();
+});
+
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });
+
+// アプリ終了前の処理
+app.on('before-quit', () => {
+    app.isQuitting = true;
+});
 
 // IPC ハンドラ
 ipcMain.handle('get-printers', async (e) => {
@@ -416,4 +656,62 @@ ipcMain.handle('stop-polling',  () => { stopPolling();  return true; });
 ipcMain.handle('download-sample-pdf', async () => {
     // S3からvouchers/sample.pdfをダウンロード
     return downloadFromS3('vouchers/sample.pdf');
+});
+
+// API接続テスト
+ipcMain.handle('test-api-connection', async (_e, testConfig) => {
+    try {
+        const apiUrl = `https://${testConfig.apiHost}/api/printer/tasks`;
+        const ip = getLocalIp();
+        const headers = { 'Content-Type': 'application/json' };
+
+        if (testConfig.apiToken) {
+            headers['Authorization'] = `Bearer ${testConfig.apiToken}`;
+        }
+
+        console.log('Testing API connection to:', apiUrl);
+
+        const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ printer_pc_id: ip }),
+            signal: AbortSignal.timeout(10000) // 10秒タイムアウト
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            return {
+                success: false,
+                status: res.status,
+                statusText: res.statusText,
+                error: `HTTP ${res.status}: ${res.statusText}`,
+                details: errorText.substring(0, 500) // 最初の500文字のみ
+            };
+        }
+
+        // 正常なレスポンス
+        return {
+            success: true,
+            status: res.status,
+            message: 'API接続に成功しました'
+        };
+
+    } catch (err) {
+        console.error('API connection test error:', err);
+
+        let errorMessage = err.message;
+        if (err.name === 'AbortError' || err.message.includes('timeout')) {
+            errorMessage = '接続タイムアウト: APIサーバーに接続できません (10秒以内に応答がありませんでした)';
+        } else if (err.message.includes('fetch failed') || err.message.includes('ENOTFOUND')) {
+            errorMessage = 'ホスト名が解決できません: APIホストが正しいか確認してください';
+        } else if (err.message.includes('ECONNREFUSED')) {
+            errorMessage = '接続が拒否されました: APIサーバーが起動していない可能性があります';
+        }
+
+        return {
+            success: false,
+            error: errorMessage,
+            details: err.stack
+        };
+    }
 });

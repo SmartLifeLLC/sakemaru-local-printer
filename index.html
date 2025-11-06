@@ -301,11 +301,14 @@
             <label>ポーリング間隔 (ms):</label>
             <input type="number" id="cfg-pollInterval" />
 
-            <label>取得 API アドレス:</label>
-            <input type="text" id="cfg-apiAddress" />
+            <label>API ホスト <small>(例: tani-hub.sakemaru.click)</small>:</label>
+            <input type="text" id="cfg-apiHost" placeholder="tani-hub.sakemaru.click" />
 
             <label>API認証トークン (Bearer):</label>
             <input type="password" id="cfg-apiToken" placeholder="認証トークンを入力してください" />
+
+            <button id="btn-test-api" type="button" style="margin-top:8px;">API接続テスト</button>
+            <div id="api-test-result" style="margin-top:8px; padding:8px; display:none; border-radius:8px;"></div>
         </div>
 
         <div class="section">

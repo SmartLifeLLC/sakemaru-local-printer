@@ -75,6 +75,14 @@ window.addEventListener('DOMContentLoaded', () => {
             if (data.status === 'log') {
                 addLogLine(data.message, data.type);
                 lastPollTime.textContent = new Date().toLocaleString('ja-JP');
+
+                // 自動起動時のUI状態更新
+                if (data.message.includes('ポーリングを開始しました')) {
+                    pollingStatus.textContent = '動作中';
+                    pollingStatus.style.color = '#28a745';
+                    startBtn.style.display = 'none';
+                    stopBtn.style.display = '';
+                }
             } else if (data.status === 'received') {
                 lastPollTime.textContent = new Date().toLocaleString('ja-JP');
                 addLogLine('タスクを受信しました', 'info');
@@ -89,7 +97,8 @@ window.addEventListener('DOMContentLoaded', () => {
                 addLogLine(msg, 'success');
             } else if (data.status === 'error') {
                 lastPollTime.textContent = new Date().toLocaleString('ja-JP');
-                addLogLine('エラー: ' + data.error, 'error');
+                const errorMsg = data.error || '不明なエラーが発生しました';
+                addLogLine('エラー: ' + errorMsg, 'error');
             }
         });
 
@@ -212,12 +221,12 @@ window.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- 設定タブ用処理 ---
-    if (document.getElementById('cfg-pollInterval')) {
+    // --- 設定タブ用処理（index.html内のタブ） ---
+    if (document.getElementById('cfg-pollInterval') && document.querySelector('.tabs')) {
         // 初期ロード時に設定を読み込み
         window.electronAPI.loadConfig().then(cfg => {
             document.getElementById('cfg-pollInterval').value = cfg.pollInterval;
-            document.getElementById('cfg-apiAddress').value = cfg.apiAddress;
+            document.getElementById('cfg-apiHost').value = cfg.apiHost;
             document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
             document.getElementById('cfg-s3-bucket').value = cfg.s3.bucket;
             document.getElementById('cfg-s3-region').value = cfg.s3.region;
@@ -225,12 +234,58 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-s3-secretAccessKey').value = cfg.s3.secretAccessKey;
         }).catch(() => alert('設定読み込み失敗'));
 
+        // API接続テスト
+        document.getElementById('btn-test-api').addEventListener('click', async () => {
+            const apiHost = document.getElementById('cfg-apiHost').value;
+            const apiToken = document.getElementById('cfg-apiToken').value;
+            const resultDiv = document.getElementById('api-test-result');
+
+            if (!apiHost || apiHost.trim() === '') {
+                resultDiv.style.display = 'block';
+                resultDiv.style.backgroundColor = '#ffebee';
+                resultDiv.style.border = '1px solid #f44336';
+                resultDiv.innerHTML = '❌ APIホストを入力してください';
+                return;
+            }
+
+            // テスト中の表示
+            resultDiv.style.display = 'block';
+            resultDiv.style.backgroundColor = '#e3f2fd';
+            resultDiv.style.border = '1px solid #2196f3';
+            resultDiv.innerHTML = '⏳ API接続をテスト中...';
+
+            try {
+                const result = await window.electronAPI.testApiConnection({
+                    apiHost: apiHost,
+                    apiToken: apiToken
+                });
+
+                if (result.success) {
+                    resultDiv.style.backgroundColor = '#e8f5e9';
+                    resultDiv.style.border = '1px solid #4caf50';
+                    resultDiv.innerHTML = `✅ ${result.message}<br><small>Status: ${result.status}</small>`;
+                } else {
+                    resultDiv.style.backgroundColor = '#ffebee';
+                    resultDiv.style.border = '1px solid #f44336';
+                    let errorHtml = `❌ ${result.error}`;
+                    if (result.status) {
+                        errorHtml += `<br><small>HTTP Status: ${result.status} ${result.statusText || ''}</small>`;
+                    }
+                    resultDiv.innerHTML = errorHtml;
+                }
+            } catch (err) {
+                resultDiv.style.backgroundColor = '#ffebee';
+                resultDiv.style.border = '1px solid #f44336';
+                resultDiv.innerHTML = `❌ テスト中にエラーが発生: ${err.message}`;
+            }
+        });
+
         // 設定を保存
         document.getElementById('btn-save-config').addEventListener('click', async () => {
             const currentCfg = await window.electronAPI.loadConfig();
             const newCfg = {
                 pollInterval: Number(document.getElementById('cfg-pollInterval').value),
-                apiAddress: document.getElementById('cfg-apiAddress').value,
+                apiHost: document.getElementById('cfg-apiHost').value,
                 apiToken: document.getElementById('cfg-apiToken').value,
                 printer0: currentCfg.printer0 || '',
                 printer1: currentCfg.printer1 || '',
@@ -243,6 +298,30 @@ window.addEventListener('DOMContentLoaded', () => {
                     secretAccessKey: document.getElementById('cfg-s3-secretAccessKey').value,
                 },
             };
+
+            // バリデーション
+            if (!newCfg.apiHost || newCfg.apiHost.trim() === '') {
+                alert('エラー: APIホストを入力してください');
+                return;
+            }
+
+            // API接続テストを実行
+            const testResult = await window.electronAPI.testApiConnection({
+                apiHost: newCfg.apiHost,
+                apiToken: newCfg.apiToken
+            });
+
+            if (!testResult.success) {
+                const confirmSave = confirm(
+                    `⚠️ API接続テストが失敗しました\n\n` +
+                    `エラー: ${testResult.error}\n\n` +
+                    `このまま保存しますか？\n` +
+                    `(保存するとポーリングが再起動されますが、正常に動作しない可能性があります)`
+                );
+                if (!confirmSave) {
+                    return;
+                }
+            }
 
             // 設定変更の確認
             if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {
@@ -259,12 +338,15 @@ window.addEventListener('DOMContentLoaded', () => {
     if (document.getElementById('cfg-pollInterval') && !document.querySelector('.tabs')) {
         const elems = {
             pollInterval:      document.getElementById('cfg-pollInterval'),
-            apiAddress:        document.getElementById('cfg-apiAddress'),
+            apiHost:           document.getElementById('cfg-apiHost'),
+            apiToken:          document.getElementById('cfg-apiToken'),
             printer0:          document.getElementById('cfg-printer0'),
             printer1:          document.getElementById('cfg-printer1'),
             printer2:          document.getElementById('cfg-printer2'),
             printer3:          document.getElementById('cfg-printer3'),
             loadPrintersBtn:   document.getElementById('btn-load-printers'),
+            testApiBtn:        document.getElementById('btn-test-api'),
+            apiTestResult:     document.getElementById('api-test-result'),
             s3: {
                 bucket:          document.getElementById('cfg-s3-bucket'),
                 region:          document.getElementById('cfg-s3-region'),
@@ -298,10 +380,56 @@ window.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // API接続テスト
+        elems.testApiBtn.addEventListener('click', async () => {
+            const apiHost = elems.apiHost.value;
+            const apiToken = elems.apiToken.value;
+            const resultDiv = elems.apiTestResult;
+
+            if (!apiHost || apiHost.trim() === '') {
+                resultDiv.style.display = 'block';
+                resultDiv.style.backgroundColor = '#ffebee';
+                resultDiv.style.border = '1px solid #f44336';
+                resultDiv.innerHTML = '❌ APIホストを入力してください';
+                return;
+            }
+
+            // テスト中の表示
+            resultDiv.style.display = 'block';
+            resultDiv.style.backgroundColor = '#e3f2fd';
+            resultDiv.style.border = '1px solid #2196f3';
+            resultDiv.innerHTML = '⏳ API接続をテスト中...';
+
+            try {
+                const result = await window.electronAPI.testApiConnection({
+                    apiHost: apiHost,
+                    apiToken: apiToken
+                });
+
+                if (result.success) {
+                    resultDiv.style.backgroundColor = '#e8f5e9';
+                    resultDiv.style.border = '1px solid #4caf50';
+                    resultDiv.innerHTML = `✅ ${result.message}<br><small>Status: ${result.status}</small>`;
+                } else {
+                    resultDiv.style.backgroundColor = '#ffebee';
+                    resultDiv.style.border = '1px solid #f44336';
+                    let errorHtml = `❌ ${result.error}`;
+                    if (result.status) {
+                        errorHtml += `<br><small>HTTP Status: ${result.status} ${result.statusText || ''}</small>`;
+                    }
+                    resultDiv.innerHTML = errorHtml;
+                }
+            } catch (err) {
+                resultDiv.style.backgroundColor = '#ffebee';
+                resultDiv.style.border = '1px solid #f44336';
+                resultDiv.innerHTML = `❌ テスト中にエラーが発生: ${err.message}`;
+            }
+        });
+
         // 読み込み
         window.electronAPI.loadConfig().then(cfg => {
             elems.pollInterval.value       = cfg.pollInterval;
-            elems.apiAddress.value         = cfg.apiAddress;
+            elems.apiHost.value            = cfg.apiHost;
             elems.printer0.value           = cfg.printer0 || '';
             elems.printer1.value           = cfg.printer1 || '';
             elems.printer2.value           = cfg.printer2 || '';
@@ -313,10 +441,11 @@ window.addEventListener('DOMContentLoaded', () => {
         }).catch(() => alert('設定読み込み失敗'));
 
         // 保存
-        elems.saveBtn.addEventListener('click', () => {
+        elems.saveBtn.addEventListener('click', async () => {
             const newCfg = {
                 pollInterval:   Number(elems.pollInterval.value),
-                apiAddress:     elems.apiAddress.value,
+                apiHost:        elems.apiHost.value,
+                apiToken:       elems.apiToken.value,
                 printer0:       elems.printer0.value,
                 printer1:       elems.printer1.value,
                 printer2:       elems.printer2.value,
@@ -328,6 +457,30 @@ window.addEventListener('DOMContentLoaded', () => {
                     secretAccessKey: elems.s3.secretAccessKey.value,
                 },
             };
+
+            // バリデーション
+            if (!newCfg.apiHost || newCfg.apiHost.trim() === '') {
+                alert('エラー: APIホストを入力してください');
+                return;
+            }
+
+            // API接続テストを実行
+            const testResult = await window.electronAPI.testApiConnection({
+                apiHost: newCfg.apiHost,
+                apiToken: newCfg.apiToken
+            });
+
+            if (!testResult.success) {
+                const confirmSave = confirm(
+                    `⚠️ API接続テストが失敗しました\n\n` +
+                    `エラー: ${testResult.error}\n\n` +
+                    `このまま保存しますか？\n` +
+                    `(保存するとポーリングが再起動されますが、正常に動作しない可能性があります)`
+                );
+                if (!confirmSave) {
+                    return;
+                }
+            }
 
             // 設定変更の確認
             if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {

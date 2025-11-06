@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 設定ウィンドウ向け
     loadConfig:       () => ipcRenderer.invoke('load-config'),
     saveConfig:       (cfg) => ipcRenderer.invoke('save-config', cfg),
+    testApiConnection: (cfg) => ipcRenderer.invoke('test-api-connection', cfg),
 
     // ステータスウィンドウ向け：ポーリング状況を受け取る
     onPollStatus:     (callback) => ipcRenderer.on('poll-status', (_e, data) => callback(data)),

@@ -14,12 +14,14 @@
 <label>ポーリング間隔 (ms):
   <input type="number" id="cfg-pollInterval"/>
 </label>
-<label>取得 API アドレス:
-  <input type="text" id="cfg-apiAddress" size="50"/>
+<label>API ホスト <small>(例: tani-hub.sakemaru.click)</small>:
+  <input type="text" id="cfg-apiHost" size="50" placeholder="tani-hub.sakemaru.click"/>
 </label>
-<label>SYNC API アドレス:
-  <input type="text" id="cfg-syncApiAddress" size="50"/>
+<label>API トークン:
+  <input type="password" id="cfg-apiToken" size="50"/>
 </label>
+<button id="btn-test-api" type="button" style="margin-top:8px;">API接続テスト</button>
+<div id="api-test-result" style="margin-top:8px; padding:8px; display:none;"></div>
 
 <fieldset>
   <legend>プリンタ設定</legend>
