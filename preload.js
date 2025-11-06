@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     startPolling:     () => ipcRenderer.invoke('start-polling'),
     stopPolling:      () => ipcRenderer.invoke('stop-polling'),
     downloadSamplePdf: () => ipcRenderer.invoke('download-sample-pdf'),
+    getAppVersion:    () => ipcRenderer.invoke('get-app-version'),
 
     // 設定ウィンドウ向け
     loadConfig:       () => ipcRenderer.invoke('load-config'),

@@ -15,6 +15,11 @@ window.addEventListener('DOMContentLoaded', () => {
             // クリックされたタブとコンテンツに active を追加
             tab.classList.add('active');
             document.getElementById(`tab-${targetTab}`).classList.add('active');
+
+            // プリンタ設定タブが選択された場合、プリンタ一覧を自動読み込み
+            if (targetTab === 'printer' && window.loadPrintersAndApplyConfig) {
+                window.loadPrintersAndApplyConfig(false);
+            }
         });
     });
 
@@ -102,6 +107,16 @@ window.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // バージョン情報を取得して表示
+        window.electronAPI.getAppVersion().then(version => {
+            const versionElement = document.getElementById('app-version');
+            if (versionElement) {
+                versionElement.textContent = `v${version}`;
+            }
+        }).catch(err => {
+            console.error('Failed to get app version:', err);
+        });
+
         // 初期ログメッセージ
         addLogLine('アプリケーション起動', 'info');
     }
@@ -134,25 +149,44 @@ window.addEventListener('DOMContentLoaded', () => {
                 console.log('Got printers:', ps);
 
                 // すべてのselectに反映
+                const printerNames = ps.map(p => p.name);
+
                 printerSelects.forEach((sel, index) => {
                     if (!sel) {
                         console.warn(`Select element at index ${index} is null`);
                         return;
                     }
                     sel.innerHTML = '<option value="">（未設定）</option>';
+
+                    // システムから取得したプリンタをオプションに追加
                     ps.forEach(p => {
                         const o = document.createElement('option');
                         o.value = p.name;
                         o.textContent = p.name + (p.isDefault ? ' (Default)' : '');
                         sel.appendChild(o);
                     });
-                });
 
-                // 保存済みの設定を反映
-                document.getElementById('printer0').value = savedPrinters.printer0;
-                document.getElementById('printer1').value = savedPrinters.printer1;
-                document.getElementById('printer2').value = savedPrinters.printer2;
-                document.getElementById('printer3').value = savedPrinters.printer3;
+                    // printer0~3のみ保存設定を反映（test-printerは除外）
+                    if (index < 4) {
+                        const savedValue = savedPrinters[`printer${index}`];
+
+                        // 保存済みの設定がシステムに存在しない場合、オプションとして追加（警告付き）
+                        if (savedValue && !printerNames.includes(savedValue)) {
+                            const o = document.createElement('option');
+                            o.value = savedValue;
+                            o.textContent = `${savedValue} ⚠️ (システムに見つかりません)`;
+                            o.style.color = '#d32f2f';
+                            sel.appendChild(o);
+                            console.warn(`Saved printer "${savedValue}" not found in system`);
+                        }
+
+                        // 保存済みの設定を反映
+                        if (savedValue) {
+                            sel.value = savedValue;
+                            console.log(`Set printer${index} to: ${savedValue}`);
+                        }
+                    }
+                });
 
                 if (showAlert) {
                     alert('プリンタ一覧を読み込みました');
@@ -164,6 +198,9 @@ window.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
+
+        // グローバルスコープに関数を公開（タブ切り替え時に使用）
+        window.loadPrintersAndApplyConfig = loadPrintersAndApplyConfig;
 
         // 初期ロード時に自動的にプリンタ一覧を取得して設定を反映
         loadPrintersAndApplyConfig(false);
@@ -361,18 +398,36 @@ window.addEventListener('DOMContentLoaded', () => {
             try {
                 const ps = await window.electronAPI.getPrinters();
                 const selects = [elems.printer0, elems.printer1, elems.printer2, elems.printer3];
+                const printerNames = ps.map(p => p.name);
 
-                selects.forEach(sel => {
+                selects.forEach((sel, index) => {
                     const currentValue = sel.value;
+                    console.log(`Reloading printer${index}, current value: ${currentValue}`);
+
                     sel.innerHTML = '<option value="">（未設定）</option>';
+
+                    // システムから取得したプリンタをオプションに追加
                     ps.forEach(p => {
                         const o = document.createElement('option');
                         o.value = p.name;
                         o.textContent = p.name + (p.isDefault ? ' (Default)' : '');
                         sel.appendChild(o);
                     });
+
+                    // 現在の値がシステムに存在しない場合、オプションとして追加（警告付き）
+                    if (currentValue && !printerNames.includes(currentValue)) {
+                        const o = document.createElement('option');
+                        o.value = currentValue;
+                        o.textContent = `${currentValue} ⚠️ (システムに見つかりません)`;
+                        o.style.color = '#d32f2f';
+                        sel.appendChild(o);
+                    }
+
                     // 前の値を復元
-                    if (currentValue) sel.value = currentValue;
+                    if (currentValue) {
+                        sel.value = currentValue;
+                        console.log(`Restored printer${index} to: ${currentValue}`);
+                    }
                 });
                 alert('プリンタ一覧を読み込みました');
             } catch {
@@ -426,18 +481,54 @@ window.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // 読み込み
-        window.electronAPI.loadConfig().then(cfg => {
+        // 読み込み（プリンタ一覧も自動取得）
+        window.electronAPI.loadConfig().then(async cfg => {
             elems.pollInterval.value       = cfg.pollInterval;
             elems.apiHost.value            = cfg.apiHost;
-            elems.printer0.value           = cfg.printer0 || '';
-            elems.printer1.value           = cfg.printer1 || '';
-            elems.printer2.value           = cfg.printer2 || '';
-            elems.printer3.value           = cfg.printer3 || '';
+            elems.apiToken.value           = cfg.apiToken || '';
             elems.s3.bucket.value          = cfg.s3.bucket;
             elems.s3.region.value          = cfg.s3.region;
             elems.s3.accessKeyId.value     = cfg.s3.accessKeyId;
             elems.s3.secretAccessKey.value = cfg.s3.secretAccessKey;
+
+            // プリンタ一覧を取得して、保存済み設定を反映
+            try {
+                const ps = await window.electronAPI.getPrinters();
+                const selects = [elems.printer0, elems.printer1, elems.printer2, elems.printer3];
+                const savedPrinters = [cfg.printer0 || '', cfg.printer1 || '', cfg.printer2 || '', cfg.printer3 || ''];
+                const printerNames = ps.map(p => p.name);
+
+                console.log('Loading printers for config.html:', savedPrinters);
+
+                selects.forEach((sel, index) => {
+                    sel.innerHTML = '<option value="">（未設定）</option>';
+
+                    // システムから取得したプリンタをオプションに追加
+                    ps.forEach(p => {
+                        const o = document.createElement('option');
+                        o.value = p.name;
+                        o.textContent = p.name + (p.isDefault ? ' (Default)' : '');
+                        sel.appendChild(o);
+                    });
+
+                    // 保存済みの値がシステムに存在しない場合、オプションとして追加（警告付き）
+                    if (savedPrinters[index] && !printerNames.includes(savedPrinters[index])) {
+                        const o = document.createElement('option');
+                        o.value = savedPrinters[index];
+                        o.textContent = `${savedPrinters[index]} ⚠️ (システムに見つかりません)`;
+                        o.style.color = '#d32f2f';
+                        sel.appendChild(o);
+                    }
+
+                    // 保存済みの値を設定
+                    if (savedPrinters[index]) {
+                        sel.value = savedPrinters[index];
+                        console.log(`Set config printer${index} to: ${savedPrinters[index]}`);
+                    }
+                });
+            } catch (err) {
+                console.error('初期プリンタ読み込みエラー:', err);
+            }
         }).catch(() => alert('設定読み込み失敗'));
 
         // 保存

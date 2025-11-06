@@ -43,9 +43,59 @@ const autoLauncher = new AutoLaunch({
     path: app.getPath('exe'),
 });
 
-// 設定ファイルパス
-const configPath = path.join(__dirname, 'config.json');
-let config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+// 設定ファイルパス（ユーザーデータディレクトリに配置）
+const userDataPath = app.getPath('userData');
+const configPath = path.join(userDataPath, 'config.json');
+
+// デフォルト設定
+const defaultConfig = {
+    pollInterval: 5000,
+    apiHost: '',
+    apiToken: '',
+    printer0: '',
+    printer1: '',
+    printer2: '',
+    printer3: '',
+    s3: {
+        bucket: '',
+        region: 'ap-northeast-1',
+        accessKeyId: '',
+        secretAccessKey: ''
+    }
+};
+
+// 設定ファイルを読み込む（存在しない場合はデフォルト設定で作成）
+let config;
+if (fs.existsSync(configPath)) {
+    config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    console.log('Configuration loaded from:', configPath);
+} else {
+    // 開発時用: プロジェクトルートのconfig.jsonをコピー
+    const devConfigPath = path.join(__dirname, 'config.json');
+    if (fs.existsSync(devConfigPath)) {
+        config = JSON.parse(fs.readFileSync(devConfigPath, 'utf-8'));
+        console.log('Configuration copied from development config:', devConfigPath);
+    } else {
+        config = defaultConfig;
+        console.log('Using default configuration');
+    }
+    // ユーザーデータディレクトリに保存
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    console.log('Configuration saved to:', configPath);
+}
+
+// 設定を保存する関数
+function saveConfigToFile() {
+    try {
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        console.log('Configuration saved to:', configPath);
+        return true;
+    } catch (err) {
+        console.error('Failed to save config:', err);
+        writeLog(`設定の保存に失敗: ${err.message}`, 'error');
+        return false;
+    }
+}
 
 let mainWindow;
 let configWindow;
@@ -104,14 +154,22 @@ async function printPdf(printerName, localFilePath) {
 
     if (platform === 'win32') {
         // Windows は pdf-to-printer を使う
-        return printerLib.print(localFilePath, {
-            printer: printerName,
-            win32: ['-print-settings "fit"']
-        });
+        // オプション1: デフォルト用紙サイズでfitのみ指定
+        try {
+            console.log(`Printing to ${printerName}: ${localFilePath}`);
+            return await printerLib.print(localFilePath, {
+                printer: printerName,
+                win32: ['-print-settings "paper=A4,scale=90,fit"'] // 90%印刷
+            });
+        } catch (error) {
+            console.error('Print error:', error);
+            writeLog(`印刷エラー: ${error.message}`, 'error');
+            throw error;
+        }
     } else if (platform === 'darwin' || platform === 'linux') {
-        // macOS / Linux は lp コマンドを使う
+        // macOS / Linux は lp コマンドを使う（A4用紙サイズを指定）
         return new Promise((resolve, reject) => {
-            const cmd = `lp -d "${printerName}" "${localFilePath}"`;
+            const cmd = `lp -d "${printerName}" -o media=A4 "${localFilePath}"`;
             exec(cmd, (error, stdout, stderr) => {
                 if (error) {
                     console.error('lp error:', stderr || error.message);
@@ -308,9 +366,13 @@ async function pollLoop() {
 }
 
 function startPolling() {
-    if (isPolling) return;
+    if (isPolling) {
+        writeLog('ポーリングは既に実行中です', 'info');
+        return;
+    }
     isPolling = true;
     console.log('Starting polling...');
+    writeLog(`ポーリング開始: ${config.apiHost} (間隔: ${config.pollInterval}ms)`, 'info');
     pollLoop();
     updateTrayMenu(); // トレイメニューを更新
 }
@@ -357,6 +419,7 @@ function createMainWindow() {
     mainWindow.on('closed', () => mainWindow = null);
 
     // 右クリックメニュー（コンテキストメニュー）を有効化
+
     mainWindow.webContents.on('context-menu', (e, params) => {
         const { editFlags } = params;
         const hasText = params.selectionText.trim().length > 0;
@@ -524,6 +587,55 @@ function updateTrayMenu() {
     tray.setContextMenu(contextMenu);
 }
 
+// システムから利用可能なプリンタ一覧を取得して設定を検証
+async function validatePrinterConfiguration() {
+    try {
+        // メインウィンドウが作成されていない場合はスキップ
+        if (!mainWindow) {
+            writeLog('メインウィンドウが作成されていないため、プリンタ検証をスキップします', 'info');
+            return false;
+        }
+
+        // システムから利用可能なプリンタ一覧を取得
+        let availablePrinters = [];
+        try {
+            if (typeof mainWindow.webContents.getPrintersAsync === 'function') {
+                availablePrinters = await mainWindow.webContents.getPrintersAsync();
+            } else if (typeof mainWindow.webContents.getPrinters === 'function') {
+                availablePrinters = mainWindow.webContents.getPrinters();
+            } else {
+                writeLog('プリンタ取得APIが利用できません', 'error');
+                return false;
+            }
+        } catch (err) {
+            writeLog(`プリンタ一覧の取得に失敗: ${err.message}`, 'error');
+            return false;
+        }
+
+        const printerNames = availablePrinters.map(p => p.name);
+        writeLog(`システムから${printerNames.length}台のプリンタを検出しました`, 'info');
+
+        // config.jsonに設定されているプリンタが実際に存在するか確認
+        let hasValidPrinter = false;
+        for (let i = 0; i < 4; i++) {
+            const configuredPrinter = config[`printer${i}`];
+            if (configuredPrinter) {
+                if (printerNames.includes(configuredPrinter)) {
+                    writeLog(`プリンタ${i}: ${configuredPrinter} は有効です`, 'info');
+                    hasValidPrinter = true;
+                } else {
+                    writeLog(`警告: プリンタ${i} (${configuredPrinter}) がシステムに見つかりません`, 'error');
+                }
+            }
+        }
+
+        return hasValidPrinter;
+    } catch (err) {
+        writeLog(`プリンタ設定の検証中にエラーが発生: ${err.message}`, 'error');
+        return false;
+    }
+}
+
 // 起動時の設定チェック関数
 function checkAutoStartConditions() {
     // プリンター設定チェック（少なくとも1つのプリンターが設定されているか）
@@ -537,6 +649,15 @@ function checkAutoStartConditions() {
 
 // メニューバー設定 & アプリ起動
 app.whenReady().then(() => {
+    console.log('Application starting...');
+    console.log('Loaded configuration:');
+    console.log('  API Host:', config.apiHost);
+    console.log('  Poll Interval:', config.pollInterval);
+    console.log('  Printer0:', config.printer0 || '(未設定)');
+    console.log('  Printer1:', config.printer1 || '(未設定)');
+    console.log('  Printer2:', config.printer2 || '(未設定)');
+    console.log('  Printer3:', config.printer3 || '(未設定)');
+
     const template = [
         {
             label: app.name,
@@ -587,11 +708,18 @@ app.whenReady().then(() => {
 
     // 起動時の自動ポーリング開始チェック
     if (checkAutoStartConditions()) {
-        writeLog('設定が正常です。ポーリングを自動開始します', 'info');
-        // ウィンドウ作成後、少し待ってからポーリング開始
-        setTimeout(() => {
-            startPolling();
-            writeLog('ポーリングを開始しました', 'success');
+        // ウィンドウ作成後、プリンタ検証を実行してからポーリング開始
+        setTimeout(async () => {
+            writeLog('プリンタ設定を検証しています...', 'info');
+            const isValid = await validatePrinterConfiguration();
+
+            if (isValid) {
+                writeLog('プリンタ設定が正常です。ポーリングを自動開始します', 'info');
+                startPolling();
+                writeLog('ポーリングを開始しました', 'success');
+            } else {
+                writeLog('プリンタ設定に問題があります。設定を確認してください', 'error');
+            }
         }, 1000);
     } else {
         writeLog('プリンターまたはAPI設定が不足しています。設定を確認してください', 'error');
@@ -610,6 +738,14 @@ app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) creat
 // アプリ終了前の処理
 app.on('before-quit', () => {
     app.isQuitting = true;
+
+    // ポーリングを停止
+    stopPolling();
+    writeLog('アプリケーションを終了します...', 'info');
+
+    // 現在の設定を保存
+    saveConfigToFile();
+    writeLog('設定を保存しました', 'info');
 });
 
 // IPC ハンドラ
@@ -645,14 +781,36 @@ ipcMain.handle('get-printers', async (e) => {
 ipcMain.handle('print-to-printer', (_e, args) => printPdf(args.printerName, args.filePath));
 ipcMain.handle('load-config', async () => JSON.parse(fs.readFileSync(configPath, 'utf-8')));
 ipcMain.handle('save-config', async (_e, newCfg) => {
-    fs.writeFileSync(configPath, JSON.stringify(newCfg, null, 2));
+    writeLog('設定を保存しています...', 'info');
+
+    // 設定を更新
     config = newCfg;
+
+    // ファイルに保存
+    if (!saveConfigToFile()) {
+        writeLog('設定の保存に失敗しました', 'error');
+        return false;
+    }
+
+    writeLog(`API設定を更新: ${config.apiHost}`, 'info');
+
+    // ポーリングを停止
     stopPolling();
-    startPolling();
+    writeLog('ポーリングを停止しました', 'info');
+
+    // 少し待ってからポーリング再開
+    setTimeout(() => {
+        startPolling();
+        writeLog('新しい設定でポーリングを再開しました', 'success');
+    }, 500);
+
     return true;
 });
 ipcMain.handle('start-polling', () => { startPolling(); return true; });
 ipcMain.handle('stop-polling',  () => { stopPolling();  return true; });
+ipcMain.handle('get-app-version', () => {
+    return app.getVersion();
+});
 ipcMain.handle('download-sample-pdf', async () => {
     // S3からvouchers/sample.pdfをダウンロード
     return downloadFromS3('vouchers/sample.pdf');
