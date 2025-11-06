@@ -1,6 +1,6 @@
 {
   "name": "sakemaru-local-printer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "酒まる専用のローカル印刷エージェント",
   "main": "main.js",
   "scripts": {
