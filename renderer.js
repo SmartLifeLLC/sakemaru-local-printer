@@ -103,10 +103,10 @@ window.addEventListener('DOMContentLoaded', () => {
                 // 保存済みの設定を取得
                 const cfg = await window.electronAPI.loadConfig();
                 const savedPrinters = {
+                    printer0: cfg.printer0 || '',
                     printer1: cfg.printer1 || '',
                     printer2: cfg.printer2 || '',
-                    printer3: cfg.printer3 || '',
-                    printer4: cfg.printer4 || ''
+                    printer3: cfg.printer3 || ''
                 };
 
                 // プリンタ一覧を取得
@@ -124,10 +124,10 @@ window.addEventListener('DOMContentLoaded', () => {
                 });
 
                 // 保存済みの設定を反映
+                document.getElementById('printer0').value = savedPrinters.printer0;
                 document.getElementById('printer1').value = savedPrinters.printer1;
                 document.getElementById('printer2').value = savedPrinters.printer2;
                 document.getElementById('printer3').value = savedPrinters.printer3;
-                document.getElementById('printer4').value = savedPrinters.printer4;
 
                 if (showAlert) {
                     alert('プリンタ一覧を読み込みました');
@@ -152,10 +152,10 @@ window.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-save-printers').addEventListener('click', async () => {
             try {
                 const cfg = await window.electronAPI.loadConfig();
+                cfg.printer0 = document.getElementById('printer0').value;
                 cfg.printer1 = document.getElementById('printer1').value;
                 cfg.printer2 = document.getElementById('printer2').value;
                 cfg.printer3 = document.getElementById('printer3').value;
-                cfg.printer4 = document.getElementById('printer4').value;
 
                 await window.electronAPI.saveConfig(cfg);
                 alert('プリンタ設定を保存しました');
@@ -202,6 +202,7 @@ window.addEventListener('DOMContentLoaded', () => {
         window.electronAPI.loadConfig().then(cfg => {
             document.getElementById('cfg-pollInterval').value = cfg.pollInterval;
             document.getElementById('cfg-apiAddress').value = cfg.apiAddress;
+            document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
             document.getElementById('cfg-s3-bucket').value = cfg.s3.bucket;
             document.getElementById('cfg-s3-region').value = cfg.s3.region;
             document.getElementById('cfg-s3-accessKeyId').value = cfg.s3.accessKeyId;
@@ -214,11 +215,11 @@ window.addEventListener('DOMContentLoaded', () => {
             const newCfg = {
                 pollInterval: Number(document.getElementById('cfg-pollInterval').value),
                 apiAddress: document.getElementById('cfg-apiAddress').value,
-                syncApiAddress: currentCfg.syncApiAddress || '', // 既存値を保持
+                apiToken: document.getElementById('cfg-apiToken').value,
+                printer0: currentCfg.printer0 || '',
                 printer1: currentCfg.printer1 || '',
                 printer2: currentCfg.printer2 || '',
                 printer3: currentCfg.printer3 || '',
-                printer4: currentCfg.printer4 || '',
                 s3: {
                     bucket: document.getElementById('cfg-s3-bucket').value,
                     region: document.getElementById('cfg-s3-region').value,
@@ -237,11 +238,10 @@ window.addEventListener('DOMContentLoaded', () => {
         const elems = {
             pollInterval:      document.getElementById('cfg-pollInterval'),
             apiAddress:        document.getElementById('cfg-apiAddress'),
-            syncApiAddress:    document.getElementById('cfg-syncApiAddress'),
+            printer0:          document.getElementById('cfg-printer0'),
             printer1:          document.getElementById('cfg-printer1'),
             printer2:          document.getElementById('cfg-printer2'),
             printer3:          document.getElementById('cfg-printer3'),
-            printer4:          document.getElementById('cfg-printer4'),
             loadPrintersBtn:   document.getElementById('btn-load-printers'),
             s3: {
                 bucket:          document.getElementById('cfg-s3-bucket'),
@@ -256,7 +256,7 @@ window.addEventListener('DOMContentLoaded', () => {
         elems.loadPrintersBtn.addEventListener('click', async () => {
             try {
                 const ps = await window.electronAPI.getPrinters();
-                const selects = [elems.printer1, elems.printer2, elems.printer3, elems.printer4];
+                const selects = [elems.printer0, elems.printer1, elems.printer2, elems.printer3];
 
                 selects.forEach(sel => {
                     const currentValue = sel.value;
@@ -280,11 +280,10 @@ window.addEventListener('DOMContentLoaded', () => {
         window.electronAPI.loadConfig().then(cfg => {
             elems.pollInterval.value       = cfg.pollInterval;
             elems.apiAddress.value         = cfg.apiAddress;
-            elems.syncApiAddress.value     = cfg.syncApiAddress;
+            elems.printer0.value           = cfg.printer0 || '';
             elems.printer1.value           = cfg.printer1 || '';
             elems.printer2.value           = cfg.printer2 || '';
             elems.printer3.value           = cfg.printer3 || '';
-            elems.printer4.value           = cfg.printer4 || '';
             elems.s3.bucket.value          = cfg.s3.bucket;
             elems.s3.region.value          = cfg.s3.region;
             elems.s3.accessKeyId.value     = cfg.s3.accessKeyId;
@@ -296,11 +295,10 @@ window.addEventListener('DOMContentLoaded', () => {
             const newCfg = {
                 pollInterval:   Number(elems.pollInterval.value),
                 apiAddress:     elems.apiAddress.value,
-                syncApiAddress: elems.syncApiAddress.value,
+                printer0:       elems.printer0.value,
                 printer1:       elems.printer1.value,
                 printer2:       elems.printer2.value,
                 printer3:       elems.printer3.value,
-                printer4:       elems.printer4.value,
                 s3: {
                     bucket:          elems.s3.bucket.value,
                     region:          elems.s3.region.value,

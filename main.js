@@ -136,8 +136,16 @@ async function downloadFilesInParallel(jobs) {
 async function pollTask() {
     try {
         const ip = getLocalIp();
+        const headers = { 'Content-Type': 'application/json' };
+
+        // Bearer認証トークンが設定されている場合は追加
+        if (config.apiToken) {
+            headers['Authorization'] = `Bearer ${config.apiToken}`;
+        }
+
         const res = await fetch(config.apiAddress, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST',
+            headers: headers,
             body: JSON.stringify({ printer_pc_id: ip })
         });
         if (!res.ok) throw new Error(`Status ${res.status}`);
@@ -166,10 +174,10 @@ async function pollTask() {
                 const printerNum = Number(job.printer_id);
                 let printerName = config[`printer${printerNum}`];
 
-                // 指定番号のプリンタが未設定の場合、printer1にフォールバック
-                if (!printerName && printerNum !== 1) {
-                    printerName = config.printer1;
-                    writeLog(`プリンタ${printerNum}が未設定、プリンタ1にフォールバック`, 'info');
+                // 指定番号のプリンタが未設定の場合、printer0にフォールバック
+                if (!printerName && printerNum !== 0) {
+                    printerName = config.printer0;
+                    writeLog(`プリンタ${printerNum}が未設定、プリンタ0にフォールバック`, 'info');
                 }
 
                 if (printerName) {
@@ -197,9 +205,9 @@ async function pollTask() {
             const printerNum = Number(data.printer_number);
             let printerName = config[`printer${printerNum}`];
 
-            if (!printerName && printerNum !== 1) {
-                printerName = config.printer1;
-                console.log(`Printer ${printerNum} not configured, falling back to printer1`);
+            if (!printerName && printerNum !== 0) {
+                printerName = config.printer0;
+                console.log(`Printer ${printerNum} not configured, falling back to printer0`);
             }
 
             if (printerName) {
@@ -270,10 +278,44 @@ function createMainWindow() {
         width: 1000,
         height: 1100,
         icon: path.join(__dirname, 'logo.png'),
-        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true }
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            spellcheck: false
+        }
     });
     mainWindow.loadFile('index.html');
     mainWindow.on('closed', () => mainWindow = null);
+
+    // 右クリックメニュー（コンテキストメニュー）を有効化
+    mainWindow.webContents.on('context-menu', (e, params) => {
+        const { editFlags } = params;
+        const hasText = params.selectionText.trim().length > 0;
+        const can = (type) => editFlags[`can${type}`] && hasText;
+
+        const menuItems = [];
+        if (params.isEditable) {
+            menuItems.push(
+                { role: 'undo', label: '元に戻す', enabled: editFlags.canUndo },
+                { role: 'redo', label: 'やり直す', enabled: editFlags.canRedo },
+                { type: 'separator' },
+                { role: 'cut', label: '切り取り', enabled: can('Cut') },
+                { role: 'copy', label: 'コピー', enabled: can('Copy') },
+                { role: 'paste', label: '貼り付け', enabled: editFlags.canPaste },
+                { type: 'separator' },
+                { role: 'selectAll', label: 'すべて選択' }
+            );
+        } else {
+            menuItems.push(
+                { role: 'copy', label: 'コピー', enabled: can('Copy') }
+            );
+        }
+
+        if (menuItems.length > 0) {
+            const contextMenu = Menu.buildFromTemplate(menuItems);
+            contextMenu.popup();
+        }
+    });
 }
 function createConfigWindow() {
     if (configWindow) return configWindow.focus();
@@ -313,6 +355,18 @@ app.whenReady().then(() => {
                 { type: 'separator' },
                 { label: '終了', click: () => app.quit() }
             ]
+        },
+        {
+            label: '編集',
+            submenu: [
+                { role: 'undo', label: '元に戻す' },
+                { role: 'redo', label: 'やり直す' },
+                { type: 'separator' },
+                { role: 'cut', label: '切り取り' },
+                { role: 'copy', label: 'コピー' },
+                { role: 'paste', label: '貼り付け' },
+                { role: 'selectAll', label: 'すべて選択' }
+            ]
         }
     ];
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -341,10 +395,6 @@ ipcMain.handle('save-config', async (_e, newCfg) => {
 });
 ipcMain.handle('start-polling', () => { startPolling(); return true; });
 ipcMain.handle('stop-polling',  () => { stopPolling();  return true; });
-ipcMain.handle('sync-printers', async (_e, list) => {
-    await fetch(config.syncApiAddress, { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ printer_pc_id: getLocalIp(), printer_list: list }) });
-    return true;
-});
 ipcMain.handle('download-sample-pdf', async () => {
     // S3からlocal_print_test/sample.pdfをダウンロード
     return downloadFromS3('local_print_test/sample.pdf');

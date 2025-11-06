@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     printToPrinter:   (name, path) => ipcRenderer.invoke('print-to-printer', { printerName: name, filePath: path }),
     startPolling:     () => ipcRenderer.invoke('start-polling'),
     stopPolling:      () => ipcRenderer.invoke('stop-polling'),
-    syncPrinters:     (list) => ipcRenderer.invoke('sync-printers', list),
     downloadSamplePdf: () => ipcRenderer.invoke('download-sample-pdf'),
 
     // 設定ウィンドウ向け

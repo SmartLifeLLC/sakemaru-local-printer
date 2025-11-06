@@ -1,11 +1,11 @@
 {
   "pollInterval": 5000,
-  "apiAddress": "https://your-api-endpoint.com/api/printer/tasks",
-  "syncApiAddress": "https://your-api-endpoint.com/api/printer/sync",
+  "apiAddress": "https://sakemaru-ai-hub.test/api/printer/tasks",
+  "apiToken": "",
+  "printer0": "",
   "printer1": "",
   "printer2": "",
   "printer3": "",
-  "printer4": "",
   "s3": {
     "bucket": "your-s3-bucket-name",
     "region": "ap-northeast-1",

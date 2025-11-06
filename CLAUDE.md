@@ -50,7 +50,7 @@ npm install              # Install all dependencies
 - `pollInterval`: milliseconds between API polls
 - `apiAddress`: endpoint to fetch print tasks (POST with printer_pc_id)
 - `syncApiAddress`: endpoint to sync printer list
-- `printer1` ~ `printer4`: up to 4 printer slots for multi-printer support
+- `printer0` ~ `printer3`: up to 4 printer slots for multi-printer support (0-indexed)
 - `s3`: AWS credentials and bucket info for downloading PDFs
 
 ### Workflow
@@ -58,13 +58,13 @@ npm install              # Install all dependencies
 1. **Initialization**: App reads config.json, sets up menu bar, creates main window
 2. **Printer Configuration**: User opens config window (BZPrinter → 設定)
    - Clicks "プリンタ一覧を読み込み" to load available printers
-   - Assigns printers to slots 1-4
+   - Assigns printers to slots 0-3
    - Saves configuration
 3. **Printer Sync**: User clicks "SYNC PRINTER LIST" on main window to send available printers to remote API
 4. **Polling**: User starts polling via menu (BZPrinter → 開始) or main window button
    - Sends local IP to `apiAddress` as `printer_pc_id`
-   - **New format**: If response contains `{printer_number: 1-4, file: "s3-key"}`, downloads PDF and prints to specified printer slot
-   - If specified printer slot is empty, falls back to printer1
+   - **New format**: If response contains `{printer_number: 0-3, file: "s3-key"}`, downloads PDF and prints to specified printer slot
+   - If specified printer slot is empty, falls back to printer0
    - **Legacy format**: If response contains `{printer: [...], file: "s3-key"}`, prints to all printers in array
    - Deletes temp file after printing
 5. **Status**: Real-time logs shown in status window via IPC events
@@ -74,9 +74,9 @@ npm install              # Install all dependencies
 **IP Detection**: `getLocalIp()` in main.js:25 finds first non-internal IPv4 address
 
 **Multi-Printer Support**: `pollTask()` in main.js:101-189
-- Supports up to 4 printer slots (printer1~4 in config.json)
+- Supports up to 4 printer slots (printer0~3 in config.json, 0-indexed)
 - API response with `printer_number` field routes to specific printer slot
-- Falls back to printer1 if specified slot is unconfigured
+- Falls back to printer0 if specified slot is unconfigured
 - Maintains backward compatibility with array-based `printer` field
 
 **Batch Printing with Parallel Downloads** (Instruction 5): main.js:75-189

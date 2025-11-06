@@ -259,6 +259,13 @@
 
             <div class="printer-grid">
                 <div class="printer-slot">
+                    <span class="printer-number">プリンタ 0</span>
+                    <select id="printer0">
+                        <option value="">（未設定）</option>
+                    </select>
+                </div>
+
+                <div class="printer-slot">
                     <span class="printer-number">プリンタ 1</span>
                     <select id="printer1">
                         <option value="">（未設定）</option>
@@ -275,13 +282,6 @@
                 <div class="printer-slot">
                     <span class="printer-number">プリンタ 3</span>
                     <select id="printer3">
-                        <option value="">（未設定）</option>
-                    </select>
-                </div>
-
-                <div class="printer-slot">
-                    <span class="printer-number">プリンタ 4</span>
-                    <select id="printer4">
                         <option value="">（未設定）</option>
                     </select>
                 </div>
@@ -306,6 +306,9 @@
 
             <label>取得 API アドレス:</label>
             <input type="text" id="cfg-apiAddress" />
+
+            <label>API認証トークン (Bearer):</label>
+            <input type="password" id="cfg-apiToken" placeholder="認証トークンを入力してください" />
         </div>
 
         <div class="section">
