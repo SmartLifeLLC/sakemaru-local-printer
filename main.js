@@ -10,7 +10,7 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { exec } = require('child_process');
 const printerLib = require('pdf-to-printer'); // 追加が必要
 // アプリケーション名を設定
-app.name = '酒まる印刷';
+app.name = 'Sakemaru';
 
 // 設定ファイルパス
 const configPath = path.join(__dirname, 'config.json');
@@ -276,7 +276,7 @@ function createMainWindow() {
     }
     mainWindow = new BrowserWindow({
         width: 1000,
-        height: 1100,
+        height: 750,
         icon: path.join(__dirname, 'logo.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -348,11 +348,6 @@ app.whenReady().then(() => {
             submenu: [
                 { label: 'ホーム', click: createMainWindow },
                 { type: 'separator' },
-                { label: '開始', click: startPolling },
-                { label: '停止', click: stopPolling },
-                { type: 'separator' },
-                { label: '通信状況', click: createStatusWindow },
-                { type: 'separator' },
                 { label: '終了', click: () => app.quit() }
             ]
         },
@@ -379,10 +374,33 @@ app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) creat
 
 // IPC ハンドラ
 ipcMain.handle('get-printers', async (e) => {
-    const wc = e.sender;
-    if (wc.getPrintersAsync) return wc.getPrintersAsync();
-    if (wc.getPrinters)       return wc.getPrinters();
-    return BrowserWindow.fromWebContents(wc).webContents.getPrintersAsync();
+    try {
+        const wc = e.sender;
+
+        // 最新のElectronではwebContents.getPrintersAsync()を使用
+        if (typeof wc.getPrintersAsync === 'function') {
+            console.log('Using wc.getPrintersAsync()');
+            return await wc.getPrintersAsync();
+        }
+
+        // 古いバージョンではgetPrinters()
+        if (typeof wc.getPrinters === 'function') {
+            console.log('Using wc.getPrinters()');
+            return wc.getPrinters();
+        }
+
+        // BrowserWindowから取得を試みる
+        const win = BrowserWindow.fromWebContents(wc);
+        if (win && typeof win.webContents.getPrintersAsync === 'function') {
+            console.log('Using BrowserWindow.webContents.getPrintersAsync()');
+            return await win.webContents.getPrintersAsync();
+        }
+
+        throw new Error('No printer API available');
+    } catch (err) {
+        console.error('get-printers error:', err);
+        throw err;
+    }
 });
 ipcMain.handle('print-to-printer', (_e, args) => printPdf(args.printerName, args.filePath));
 ipcMain.handle('load-config', async () => JSON.parse(fs.readFileSync(configPath, 'utf-8')));
@@ -396,6 +414,6 @@ ipcMain.handle('save-config', async (_e, newCfg) => {
 ipcMain.handle('start-polling', () => { startPolling(); return true; });
 ipcMain.handle('stop-polling',  () => { stopPolling();  return true; });
 ipcMain.handle('download-sample-pdf', async () => {
-    // S3からlocal_print_test/sample.pdfをダウンロード
-    return downloadFromS3('local_print_test/sample.pdf');
+    // S3からvouchers/sample.pdfをダウンロード
+    return downloadFromS3('vouchers/sample.pdf');
 });

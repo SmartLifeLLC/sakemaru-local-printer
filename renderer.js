@@ -23,6 +23,8 @@ window.addEventListener('DOMContentLoaded', () => {
         const pollingStatus = document.getElementById('polling-status');
         const lastPollTime = document.getElementById('last-poll-time');
         const errorLog = document.getElementById('error-log');
+        const startBtn = document.getElementById('btn-start-polling');
+        const stopBtn = document.getElementById('btn-stop-polling');
         let logLines = [];
 
         // エラーログに行を追加
@@ -36,26 +38,34 @@ window.addEventListener('DOMContentLoaded', () => {
         }
 
         // ポーリング開始
-        document.getElementById('btn-start-polling').addEventListener('click', async () => {
+        startBtn.addEventListener('click', async () => {
             try {
                 await window.electronAPI.startPolling();
                 pollingStatus.textContent = '動作中';
                 pollingStatus.style.color = '#28a745';
+                startBtn.style.display = 'none';
+                stopBtn.style.display = '';
                 addLogLine('ポーリングを開始しました', 'success');
+                alert('ポーリングを開始しました');
             } catch (e) {
                 addLogLine('ポーリング開始に失敗: ' + e.message, 'error');
+                alert('ポーリング開始に失敗: ' + e.message);
             }
         });
 
         // ポーリング停止
-        document.getElementById('btn-stop-polling').addEventListener('click', async () => {
+        stopBtn.addEventListener('click', async () => {
             try {
                 await window.electronAPI.stopPolling();
                 pollingStatus.textContent = '停止中';
                 pollingStatus.style.color = '#dc3545';
+                stopBtn.style.display = 'none';
+                startBtn.style.display = '';
                 addLogLine('ポーリングを停止しました', 'info');
+                alert('ポーリングを停止しました');
             } catch (e) {
                 addLogLine('ポーリング停止に失敗: ' + e.message, 'error');
+                alert('ポーリング停止に失敗: ' + e.message);
             }
         });
 
@@ -90,10 +100,10 @@ window.addEventListener('DOMContentLoaded', () => {
     // --- プリンタ設定タブ用処理（旧ホームタブ） ---
     if (document.getElementById('btn-load')) {
         const printerSelects = [
+            document.getElementById('printer0'),
             document.getElementById('printer1'),
             document.getElementById('printer2'),
             document.getElementById('printer3'),
-            document.getElementById('printer4'),
             document.getElementById('test-printer')
         ];
 
@@ -110,10 +120,16 @@ window.addEventListener('DOMContentLoaded', () => {
                 };
 
                 // プリンタ一覧を取得
+                console.log('Calling getPrinters...');
                 const ps = await window.electronAPI.getPrinters();
+                console.log('Got printers:', ps);
 
                 // すべてのselectに反映
                 printerSelects.forEach((sel, index) => {
+                    if (!sel) {
+                        console.warn(`Select element at index ${index} is null`);
+                        return;
+                    }
                     sel.innerHTML = '<option value="">（未設定）</option>';
                     ps.forEach(p => {
                         const o = document.createElement('option');
@@ -135,7 +151,7 @@ window.addEventListener('DOMContentLoaded', () => {
             } catch (err) {
                 console.error('プリンタ一覧取得エラー:', err);
                 if (showAlert) {
-                    alert('プリンタ一覧取得に失敗');
+                    alert('プリンタ一覧取得に失敗: ' + err.message);
                 }
             }
         }
@@ -227,9 +243,15 @@ window.addEventListener('DOMContentLoaded', () => {
                     secretAccessKey: document.getElementById('cfg-s3-secretAccessKey').value,
                 },
             };
-            window.electronAPI.saveConfig(newCfg)
-                .then(() => alert('設定を保存しました'))
-                .catch(() => alert('設定保存に失敗しました'));
+
+            // 設定変更の確認
+            if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {
+                window.electronAPI.saveConfig(newCfg)
+                    .then(() => {
+                        alert('設定を保存しました。\nポーリングが再起動されました。');
+                    })
+                    .catch(() => alert('設定保存に失敗しました'));
+            }
         });
     }
 
@@ -306,9 +328,15 @@ window.addEventListener('DOMContentLoaded', () => {
                     secretAccessKey: elems.s3.secretAccessKey.value,
                 },
             };
-            window.electronAPI.saveConfig(newCfg)
-                .then(() => alert('設定を保存しました'))
-                .catch(() => alert('設定保存に失敗しました'));
+
+            // 設定変更の確認
+            if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {
+                window.electronAPI.saveConfig(newCfg)
+                    .then(() => {
+                        alert('設定を保存しました。\nポーリングが再起動されました。');
+                    })
+                    .catch(() => alert('設定保存に失敗しました'));
+            }
         });
     }
 
