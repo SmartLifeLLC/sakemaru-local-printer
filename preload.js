@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     startPolling:     () => ipcRenderer.invoke('start-polling'),
     stopPolling:      () => ipcRenderer.invoke('stop-polling'),
     syncPrinters:     (list) => ipcRenderer.invoke('sync-printers', list),
+    downloadSamplePdf: () => ipcRenderer.invoke('download-sample-pdf'),
 
     // 設定ウィンドウ向け
     loadConfig:       () => ipcRenderer.invoke('load-config'),

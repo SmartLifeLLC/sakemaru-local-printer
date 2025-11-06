@@ -10,7 +10,7 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { exec } = require('child_process');
 const printerLib = require('pdf-to-printer'); // 追加が必要
 // アプリケーション名を設定
-app.name = 'BZPrinter';
+app.name = '酒まる印刷';
 
 // 設定ファイルパス
 const configPath = path.join(__dirname, 'config.json');
@@ -83,7 +83,29 @@ async function pollTask() {
         if (!res.ok) throw new Error(`Status ${res.status}`);
         const data = await res.json();
         if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data });
-        if (Array.isArray(data.printer) && data.file) {
+
+        // 新仕様: printer_numberが指定されている場合、指定番号のプリンタに印刷
+        if (data.file && data.printer_number) {
+            const printerNum = Number(data.printer_number);
+            let printerName = config[`printer${printerNum}`];
+
+            // 指定番号のプリンタが未設定の場合、printer1にフォールバック
+            if (!printerName && printerNum !== 1) {
+                printerName = config.printer1;
+                console.log(`Printer ${printerNum} not configured, falling back to printer1`);
+            }
+
+            if (printerName) {
+                const localPdf = await downloadFromS3(data.file);
+                await printPdf(printerName, localPdf);
+                fs.unlinkSync(localPdf);
+                if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'printed', printer: printerName });
+            } else {
+                throw new Error('No printer configured');
+            }
+        }
+        // 旧仕様との互換性: data.printerが配列の場合（従来の動作）
+        else if (Array.isArray(data.printer) && data.file) {
             const localPdf = await downloadFromS3(data.file);
             for (const name of data.printer) await printPdf(name, localPdf);
             fs.unlinkSync(localPdf);
@@ -113,7 +135,7 @@ function createMainWindow() {
         mainWindow.focus();
         return;
     }
-    mainWindow = new BrowserWindow({ width: 500, height: 600, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
+    mainWindow = new BrowserWindow({ width: 1000, height: 1100, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
     mainWindow.loadFile('index.html');
     mainWindow.on('closed', () => mainWindow = null);
 }
@@ -141,7 +163,6 @@ app.whenReady().then(() => {
                 { label: '開始', click: startPolling },
                 { label: '停止', click: stopPolling },
                 { type: 'separator' },
-                { label: '設定', click: createConfigWindow },
                 { label: '通信状況', click: createStatusWindow },
                 { type: 'separator' },
                 { label: '終了', click: () => app.quit() }
@@ -177,4 +198,8 @@ ipcMain.handle('stop-polling',  () => { stopPolling();  return true; });
 ipcMain.handle('sync-printers', async (_e, list) => {
     await fetch(config.syncApiAddress, { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ printer_pc_id: getLocalIp(), printer_list: list }) });
     return true;
+});
+ipcMain.handle('download-sample-pdf', async () => {
+    // S3からlocal_print_test/sample.pdfをダウンロード
+    return downloadFromS3('local_print_test/sample.pdf');
 });

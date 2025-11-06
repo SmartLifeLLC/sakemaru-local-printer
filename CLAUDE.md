@@ -50,23 +50,34 @@ npm install              # Install all dependencies
 - `pollInterval`: milliseconds between API polls
 - `apiAddress`: endpoint to fetch print tasks (POST with printer_pc_id)
 - `syncApiAddress`: endpoint to sync printer list
+- `printer1` ~ `printer4`: up to 4 printer slots for multi-printer support
 - `s3`: AWS credentials and bucket info for downloading PDFs
 
 ### Workflow
 
 1. **Initialization**: App reads config.json, sets up menu bar, creates main window
-2. **Printer Discovery**: User clicks "LOAD PRINTERS" to enumerate local printers
-3. **Printer Sync**: User clicks "SYNC PRINTER LIST" to send available printers to remote API
+2. **Printer Configuration**: User opens config window (BZPrinter → 設定)
+   - Clicks "プリンタ一覧を読み込み" to load available printers
+   - Assigns printers to slots 1-4
+   - Saves configuration
+3. **Printer Sync**: User clicks "SYNC PRINTER LIST" on main window to send available printers to remote API
 4. **Polling**: User starts polling via menu (BZPrinter → 開始) or main window button
    - Sends local IP to `apiAddress` as `printer_pc_id`
-   - If response contains `{printer: [...], file: "s3-key"}`, downloads PDF from S3
-   - Prints to each printer in the array
+   - **New format**: If response contains `{printer_number: 1-4, file: "s3-key"}`, downloads PDF and prints to specified printer slot
+   - If specified printer slot is empty, falls back to printer1
+   - **Legacy format**: If response contains `{printer: [...], file: "s3-key"}`, prints to all printers in array
    - Deletes temp file after printing
 5. **Status**: Real-time logs shown in status window via IPC events
 
 ### Key Implementation Details
 
 **IP Detection**: `getLocalIp()` in main.js:25 finds first non-internal IPv4 address
+
+**Multi-Printer Support**: `pollTask()` in main.js:76-118
+- Supports up to 4 printer slots (printer1~4 in config.json)
+- API response with `printer_number` field routes to specific printer slot
+- Falls back to printer1 if specified slot is unconfigured
+- Maintains backward compatibility with array-based `printer` field
 
 **Cross-platform Printing**: `printPdf()` in main.js:36
 - Windows: uses `pdf-to-printer` library with fit settings

@@ -2,9 +2,12 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-
-      <title>設定</title>
-  <style>body{font-family:sans-serif;padding:16px;}label,fieldset{display:block;margin-bottom:8px;}</style>
+    <title>酒まる印刷 - 設定</title>
+    <style>
+        body{font-family:sans-serif;padding:16px;}
+        label,fieldset{display:block;margin-bottom:8px;}
+        select{width:300px;margin-top:4px;}
+    </style>
 </head>
 <body>
 <h1>設定</h1>
@@ -17,6 +20,32 @@
 <label>SYNC API アドレス:
   <input type="text" id="cfg-syncApiAddress" size="50"/>
 </label>
+
+<fieldset>
+  <legend>プリンタ設定</legend>
+  <button id="btn-load-printers" type="button">プリンタ一覧を読み込み</button>
+  <label>プリンタ 1:
+    <select id="cfg-printer1">
+      <option value="">（未設定）</option>
+    </select>
+  </label>
+  <label>プリンタ 2:
+    <select id="cfg-printer2">
+      <option value="">（未設定）</option>
+    </select>
+  </label>
+  <label>プリンタ 3:
+    <select id="cfg-printer3">
+      <option value="">（未設定）</option>
+    </select>
+  </label>
+  <label>プリンタ 4:
+    <select id="cfg-printer4">
+      <option value="">（未設定）</option>
+    </select>
+  </label>
+</fieldset>
+
 <fieldset>
   <legend>S3設定</legend>
   <label>Bucket:
@@ -35,11 +64,5 @@
 <button id="btn-save-config">保存</button>
 
 <script src="renderer.js"></script>
-</body>
-</html>
-</title>
-</head>
-<body>
-
 </body>
 </html>

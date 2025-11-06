@@ -1,7 +1,7 @@
 {
-  "name": "booze-core-local-printer",
+  "name": "sakemaru-local-printer",
   "version": "1.0.0",
-  "description": "Local print agent for booze-core",
+  "description": "酒まる専用のローカル印刷エージェント",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -19,8 +19,8 @@
     "electron-builder": "^24.8.0"
   },
   "build": {
-    "appId": "ai.r-nexus.booz-core-ai",
-    "productName": "BZCorePrinter",
+    "appId": "jp.sakemaru.printer",
+    "productName": "酒まる印刷",
     "files": [
       "**/*"
     ],

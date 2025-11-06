@@ -2,23 +2,265 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8" />
-    <title>BZCore Printer</title>
+    <title>酒まる印刷</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        button, select, input { margin: 5px 0; width: 100%; }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .printer-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 15px 0;
+        }
+        h1 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        h2 {
+            color: #555;
+            font-size: 20px;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 25px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+            margin: 8px 0;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        select, input {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin: 8px 0;
+            transition: border-color 0.3s;
+        }
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            color: #555;
+            margin-top: 15px;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        .printer-slot {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 8px 0;
+        }
+        .printer-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .btn-secondary {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        }
+        .button-row {
+            display: flex;
+            gap: 10px;
+            margin: 8px 0;
+        }
+        .button-row button {
+            flex: 1;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #28a745;
+            margin-left: 10px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+        }
+        .tab {
+            padding: 15px 30px;
+            background: #f5f5f5;
+            border: none;
+            color: #666;
+            font-size: 18px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            border-bottom: 4px solid transparent;
+            margin-bottom: -2px;
+            border-radius: 8px 8px 0 0;
+        }
+        .tab:hover {
+            color: #667eea;
+            background: rgba(102, 126, 234, 0.15);
+            transform: translateY(-2px);
+        }
+        .tab.active {
+            color: white;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-bottom-color: #667eea;
+            box-shadow: 0 -3px 15px rgba(102, 126, 234, 0.3);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
-<h2>プリンタ一覧取得</h2>
-<button id="btn-load">LOAD PRINTERS</button>
-<select id="printer-list"></select>
+<div class="container">
+    <h1>🍶 酒まる印刷<span class="status-indicator"></span></h1>
 
-<h2>SYNC</h2>
-<button id="btn-sync">SYNC PRINTER LIST</button>
+    <div class="tabs">
+        <button class="tab active" data-tab="home">🏠 ホーム</button>
+        <button class="tab" data-tab="settings">⚙️ 酒まる通信設定</button>
+    </div>
 
-<h2>PRINT TEST</h2>
-<input type="text" id="manual-file" placeholder="PDFパスを入力" value="path/to/sample.pdf"/>
-<button id="btn-print">PRINT</button>
+    <div id="tab-home" class="tab-content active">
+        <div class="section">
+            <h2>プリンタ設定</h2>
+            <div class="button-row">
+                <button id="btn-load" class="btn-secondary">📋 プリンタ一覧を読み込み</button>
+                <button id="btn-save-printers" class="btn-secondary">💾 プリンタ設定を保存</button>
+            </div>
+
+            <div class="printer-grid">
+                <div class="printer-slot">
+                    <span class="printer-number">プリンタ 1</span>
+                    <select id="printer1">
+                        <option value="">（未設定）</option>
+                    </select>
+                </div>
+
+                <div class="printer-slot">
+                    <span class="printer-number">プリンタ 2</span>
+                    <select id="printer2">
+                        <option value="">（未設定）</option>
+                    </select>
+                </div>
+
+                <div class="printer-slot">
+                    <span class="printer-number">プリンタ 3</span>
+                    <select id="printer3">
+                        <option value="">（未設定）</option>
+                    </select>
+                </div>
+
+                <div class="printer-slot">
+                    <span class="printer-number">プリンタ 4</span>
+                    <select id="printer4">
+                        <option value="">（未設定）</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>テスト印刷</h2>
+            <label>印刷するプリンタ:</label>
+            <select id="test-printer">
+                <option value="">（プリンタを選択）</option>
+            </select>
+            <button id="btn-print">🖨️ sample.pdfを印刷</button>
+        </div>
+    </div>
+
+    <div id="tab-settings" class="tab-content">
+        <div class="section">
+            <h2>API設定</h2>
+            <label>ポーリング間隔 (ms):</label>
+            <input type="number" id="cfg-pollInterval" />
+
+            <label>取得 API アドレス:</label>
+            <input type="text" id="cfg-apiAddress" />
+        </div>
+
+        <div class="section">
+            <h2>S3設定</h2>
+            <div class="printer-grid">
+                <div>
+                    <label>Bucket:</label>
+                    <input type="text" id="cfg-s3-bucket" />
+                </div>
+
+                <div>
+                    <label>Region:</label>
+                    <input type="text" id="cfg-s3-region" />
+                </div>
+
+                <div>
+                    <label>AccessKeyId:</label>
+                    <input type="text" id="cfg-s3-accessKeyId" />
+                </div>
+
+                <div>
+                    <label>SecretAccessKey:</label>
+                    <input type="password" id="cfg-s3-secretAccessKey" />
+                </div>
+            </div>
+        </div>
+
+        <button id="btn-save-config" class="btn-secondary">💾 設定を保存</button>
+    </div>
+</div>
 
 <script src="renderer.js"></script>
 </body>
