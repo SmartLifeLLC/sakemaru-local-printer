@@ -1,6 +1,6 @@
 {
   "pollInterval": 5000,
-  "apiHost": "sakemaru-ai-hub.test",
+  "apiHost": "taniguchi.booze-hub.net",
   "apiToken": "",
   "printer0": "",
   "printer1": "",
