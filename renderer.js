@@ -18,7 +18,76 @@ window.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // --- メインウィンドウ用処理（index.html） ---
+    // --- 新しいホームタブ用処理 ---
+    if (document.getElementById('btn-start-polling')) {
+        const pollingStatus = document.getElementById('polling-status');
+        const lastPollTime = document.getElementById('last-poll-time');
+        const errorLog = document.getElementById('error-log');
+        let logLines = [];
+
+        // エラーログに行を追加
+        function addLogLine(message, type = 'info') {
+            const timestamp = new Date().toLocaleString('ja-JP');
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+            logLines.push(`[${timestamp}] ${prefix} ${message}`);
+            if (logLines.length > 200) logLines.shift(); // 最大200行まで
+            errorLog.textContent = logLines.join('\n');
+            errorLog.scrollTop = errorLog.scrollHeight;
+        }
+
+        // ポーリング開始
+        document.getElementById('btn-start-polling').addEventListener('click', async () => {
+            try {
+                await window.electronAPI.startPolling();
+                pollingStatus.textContent = '動作中';
+                pollingStatus.style.color = '#28a745';
+                addLogLine('ポーリングを開始しました', 'success');
+            } catch (e) {
+                addLogLine('ポーリング開始に失敗: ' + e.message, 'error');
+            }
+        });
+
+        // ポーリング停止
+        document.getElementById('btn-stop-polling').addEventListener('click', async () => {
+            try {
+                await window.electronAPI.stopPolling();
+                pollingStatus.textContent = '停止中';
+                pollingStatus.style.color = '#dc3545';
+                addLogLine('ポーリングを停止しました', 'info');
+            } catch (e) {
+                addLogLine('ポーリング停止に失敗: ' + e.message, 'error');
+            }
+        });
+
+        // main processからのステータス更新を受信
+        window.electronAPI.onPollStatus((data) => {
+            // ログメッセージの場合はタイムスタンプ不要（すでに含まれている）
+            if (data.status === 'log') {
+                addLogLine(data.message, data.type);
+                lastPollTime.textContent = new Date().toLocaleString('ja-JP');
+            } else if (data.status === 'received') {
+                lastPollTime.textContent = new Date().toLocaleString('ja-JP');
+                addLogLine('タスクを受信しました', 'info');
+            } else if (data.status === 'downloading') {
+                lastPollTime.textContent = new Date().toLocaleString('ja-JP');
+                addLogLine(`${data.count}個のファイルをダウンロード中...`, 'info');
+            } else if (data.status === 'printed') {
+                lastPollTime.textContent = new Date().toLocaleString('ja-JP');
+                const msg = data.order !== undefined
+                    ? `印刷完了: order=${data.order}, file_id=${data.file_id}, printer=${data.printer}`
+                    : `印刷完了: printer=${data.printer || 'unknown'}`;
+                addLogLine(msg, 'success');
+            } else if (data.status === 'error') {
+                lastPollTime.textContent = new Date().toLocaleString('ja-JP');
+                addLogLine('エラー: ' + data.error, 'error');
+            }
+        });
+
+        // 初期ログメッセージ
+        addLogLine('アプリケーション起動', 'info');
+    }
+
+    // --- プリンタ設定タブ用処理（旧ホームタブ） ---
     if (document.getElementById('btn-load')) {
         const printerSelects = [
             document.getElementById('printer1'),

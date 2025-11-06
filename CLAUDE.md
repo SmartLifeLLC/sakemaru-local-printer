@@ -73,11 +73,18 @@ npm install              # Install all dependencies
 
 **IP Detection**: `getLocalIp()` in main.js:25 finds first non-internal IPv4 address
 
-**Multi-Printer Support**: `pollTask()` in main.js:76-118
+**Multi-Printer Support**: `pollTask()` in main.js:101-189
 - Supports up to 4 printer slots (printer1~4 in config.json)
 - API response with `printer_number` field routes to specific printer slot
 - Falls back to printer1 if specified slot is unconfigured
 - Maintains backward compatibility with array-based `printer` field
+
+**Batch Printing with Parallel Downloads** (Instruction 5): main.js:75-189
+- New API format: Array of print jobs `[{file_url, printer_id, file_id, order}, ...]`
+- Parallel download: Downloads up to 4 files concurrently using `downloadFilesInParallel()` (main.js:75-99)
+- Order-based printing: Jobs sorted by `order` field and printed sequentially regardless of download completion order
+- Sequential polling: Next poll only starts after all print jobs complete (prevents overlapping job batches)
+- Recursive polling: Uses `setTimeout` instead of `setInterval` to ensure previous batch completes (main.js:191-224)
 
 **Cross-platform Printing**: `printPdf()` in main.js:36
 - Windows: uses `pdf-to-printer` library with fit settings

@@ -21,6 +21,40 @@ let configWindow;
 let statusWindow;
 let pollingTimer = null;
 
+// ログファイル管理
+const logsDir = path.join(app.getPath('userData'), 'logs');
+if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+}
+
+// 日別ログファイルパスを取得
+function getLogFilePath() {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    return path.join(logsDir, `log_${today}.txt`);
+}
+
+// ログをファイルに書き込み、UIにも送信
+function writeLog(message, type = 'info') {
+    const timestamp = new Date().toISOString();
+    const logLine = `[${timestamp}] [${type.toUpperCase()}] ${message}\n`;
+
+    // ファイルに追記
+    try {
+        fs.appendFileSync(getLogFilePath(), logLine, 'utf-8');
+    } catch (err) {
+        console.error('Failed to write log:', err);
+    }
+
+    // UIに送信
+    if (mainWindow) {
+        mainWindow.webContents.send('poll-status', {
+            status: type === 'error' ? 'error' : 'log',
+            message: message,
+            type: type
+        });
+    }
+}
+
 // ローカルIP取得
 function getLocalIp() {
     const nets = os.networkInterfaces();
@@ -72,6 +106,32 @@ async function downloadFromS3(s3Key) {
     return tmp;
 }
 
+// 並列ダウンロード処理（最大4つ並列）
+async function downloadFilesInParallel(jobs) {
+    const MAX_CONCURRENT = 4;
+    const results = [];
+
+    // ダウンロード処理を実行する関数
+    async function downloadJob(job) {
+        try {
+            const localPath = await downloadFromS3(job.file_url);
+            return { ...job, localPath, success: true };
+        } catch (err) {
+            console.error(`Download failed for ${job.file_url}:`, err);
+            return { ...job, localPath: null, success: false, error: err.message };
+        }
+    }
+
+    // 最大4つずつ並列でダウンロード
+    for (let i = 0; i < jobs.length; i += MAX_CONCURRENT) {
+        const batch = jobs.slice(i, i + MAX_CONCURRENT);
+        const batchResults = await Promise.all(batch.map(downloadJob));
+        results.push(...batchResults);
+    }
+
+    return results;
+}
+
 // ポーリングタスク
 async function pollTask() {
     try {
@@ -84,12 +144,59 @@ async function pollTask() {
         const data = await res.json();
         if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data });
 
-        // 新仕様: printer_numberが指定されている場合、指定番号のプリンタに印刷
-        if (data.file && data.printer_number) {
+        // 新仕様（指示５）: 配列形式のジョブリスト
+        if (Array.isArray(data) && data.length > 0) {
+            writeLog(`${data.length}個の印刷ジョブを受信しました`, 'info');
+
+            // order順にソート
+            const sortedJobs = [...data].sort((a, b) => a.order - b.order);
+
+            // 並列ダウンロード（最大4つずつ）
+            if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'downloading', count: sortedJobs.length });
+            writeLog(`${sortedJobs.length}個のファイルをダウンロード中...`, 'info');
+            const downloadedJobs = await downloadFilesInParallel(sortedJobs);
+
+            // order順に印刷を実行
+            for (const job of downloadedJobs) {
+                if (!job.success) {
+                    writeLog(`order ${job.order} のダウンロードに失敗、印刷をスキップ`, 'error');
+                    continue;
+                }
+
+                const printerNum = Number(job.printer_id);
+                let printerName = config[`printer${printerNum}`];
+
+                // 指定番号のプリンタが未設定の場合、printer1にフォールバック
+                if (!printerName && printerNum !== 1) {
+                    printerName = config.printer1;
+                    writeLog(`プリンタ${printerNum}が未設定、プリンタ1にフォールバック`, 'info');
+                }
+
+                if (printerName) {
+                    writeLog(`印刷開始: order=${job.order}, file_id=${job.file_id}, printer=${printerName}`, 'info');
+                    await printPdf(printerName, job.localPath);
+                    fs.unlinkSync(job.localPath);
+                    if (statusWindow) {
+                        statusWindow.webContents.send('poll-status', {
+                            status: 'printed',
+                            order: job.order,
+                            file_id: job.file_id,
+                            printer: printerName
+                        });
+                    }
+                    writeLog(`印刷完了: order=${job.order}, file_id=${job.file_id}`, 'success');
+                } else {
+                    writeLog(`order ${job.order} のプリンタが設定されていません`, 'error');
+                }
+            }
+
+            writeLog('すべての印刷ジョブが完了しました', 'success');
+        }
+        // 旧仕様: printer_numberが指定されている場合
+        else if (data.file && data.printer_number) {
             const printerNum = Number(data.printer_number);
             let printerName = config[`printer${printerNum}`];
 
-            // 指定番号のプリンタが未設定の場合、printer1にフォールバック
             if (!printerName && printerNum !== 1) {
                 printerName = config.printer1;
                 console.log(`Printer ${printerNum} not configured, falling back to printer1`);
@@ -104,7 +211,7 @@ async function pollTask() {
                 throw new Error('No printer configured');
             }
         }
-        // 旧仕様との互換性: data.printerが配列の場合（従来の動作）
+        // 旧仕様: data.printerが配列の場合
         else if (Array.isArray(data.printer) && data.file) {
             const localPdf = await downloadFromS3(data.file);
             for (const name of data.printer) await printPdf(name, localPdf);
@@ -112,20 +219,44 @@ async function pollTask() {
             if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'printed' });
         }
     } catch (err) {
-        console.error('Polling error:', err);
+        writeLog(`ポーリングエラー: ${err.message}`, 'error');
         if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'error', error: err.message });
     }
 }
 
-// ポーリング開始・停止
-function startPolling() {
-    if (pollingTimer) return;
-    pollingTimer = setInterval(pollTask, config.pollInterval);
+// ポーリング開始・停止（印刷完了後に次のポーリングを実行する再帰的な実装）
+let isPolling = false;
+
+async function pollLoop() {
+    if (!isPolling) return;
+
+    try {
+        await pollTask();
+    } catch (err) {
+        console.error('Poll loop error:', err);
+    }
+
+    // 印刷完了後、設定された間隔で次のポーリングをスケジュール
+    if (isPolling) {
+        pollingTimer = setTimeout(pollLoop, config.pollInterval);
+    }
 }
+
+function startPolling() {
+    if (isPolling) return;
+    isPolling = true;
+    console.log('Starting polling...');
+    pollLoop();
+}
+
 function stopPolling() {
-    if (!pollingTimer) return;
-    clearInterval(pollingTimer);
-    pollingTimer = null;
+    if (!isPolling) return;
+    isPolling = false;
+    if (pollingTimer) {
+        clearTimeout(pollingTimer);
+        pollingTimer = null;
+    }
+    console.log('Polling stopped');
 }
 
 // ウィンドウ生成
@@ -135,19 +266,34 @@ function createMainWindow() {
         mainWindow.focus();
         return;
     }
-    mainWindow = new BrowserWindow({ width: 1000, height: 1100, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
+    mainWindow = new BrowserWindow({
+        width: 1000,
+        height: 1100,
+        icon: path.join(__dirname, 'logo.png'),
+        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true }
+    });
     mainWindow.loadFile('index.html');
     mainWindow.on('closed', () => mainWindow = null);
 }
 function createConfigWindow() {
     if (configWindow) return configWindow.focus();
-    configWindow = new BrowserWindow({ width: 500, height: 600, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
+    configWindow = new BrowserWindow({
+        width: 500,
+        height: 600,
+        icon: path.join(__dirname, 'logo.png'),
+        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true }
+    });
     configWindow.loadFile('config.html');
     configWindow.on('closed', () => configWindow = null);
 }
 function createStatusWindow() {
     if (statusWindow) return statusWindow.focus();
-    statusWindow = new BrowserWindow({ width: 400, height: 300, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
+    statusWindow = new BrowserWindow({
+        width: 400,
+        height: 300,
+        icon: path.join(__dirname, 'logo.png'),
+        webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true }
+    });
     statusWindow.loadFile('status.html');
     statusWindow.on('closed', () => statusWindow = null);
 }

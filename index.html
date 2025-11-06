@@ -163,6 +163,55 @@
         .tab-content.active {
             display: block;
         }
+        .status-box {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        .status-label {
+            font-weight: 600;
+            color: #555;
+            font-size: 16px;
+        }
+        .status-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #667eea;
+        }
+        .log-box {
+            background: #1e1e1e;
+            color: #f8f9fa;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            padding: 15px;
+            border-radius: 8px;
+            height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .log-box::-webkit-scrollbar {
+            width: 8px;
+        }
+        .log-box::-webkit-scrollbar-track {
+            background: #2e2e2e;
+            border-radius: 4px;
+        }
+        .log-box::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -171,10 +220,36 @@
 
     <div class="tabs">
         <button class="tab active" data-tab="home">🏠 ホーム</button>
+        <button class="tab" data-tab="printers">🖨️ プリンタ設定</button>
         <button class="tab" data-tab="settings">⚙️ 酒まる通信設定</button>
     </div>
 
     <div id="tab-home" class="tab-content active">
+        <div class="section">
+            <h2>ポーリング制御</h2>
+            <div class="status-box">
+                <div class="status-item">
+                    <span class="status-label">状態:</span>
+                    <span id="polling-status" class="status-value">停止中</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">最終取得:</span>
+                    <span id="last-poll-time" class="status-value">---</span>
+                </div>
+            </div>
+            <div class="button-row">
+                <button id="btn-start-polling" class="btn-secondary">▶️ 開始</button>
+                <button id="btn-stop-polling" class="btn-danger">⏹️ 停止</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>エラーログ</h2>
+            <div id="error-log" class="log-box"></div>
+        </div>
+    </div>
+
+    <div id="tab-printers" class="tab-content">
         <div class="section">
             <h2>プリンタ設定</h2>
             <div class="button-row">
