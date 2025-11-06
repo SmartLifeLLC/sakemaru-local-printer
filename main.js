@@ -7,7 +7,7 @@ const os = require('os');
 const fs = require('fs');
 const fetch = global.fetch; // Node18+ のグローバル fetch
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const printerLib = require('pdf-to-printer'); // 追加が必要
 const AutoLaunch = require('auto-launch');
 
@@ -56,6 +56,8 @@ const defaultConfig = {
     printer1: '',
     printer2: '',
     printer3: '',
+    printMethod: 'pdf-to-printer', // 'pdf-to-printer' or 'sumatra-direct'
+    sumatraPdfPath: 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe',
     s3: {
         bucket: '',
         region: 'ap-northeast-1',
@@ -153,18 +155,61 @@ async function printPdf(printerName, localFilePath) {
     const platform = os.platform();
 
     if (platform === 'win32') {
-        // Windows は pdf-to-printer を使う
-        // オプション1: デフォルト用紙サイズでfitのみ指定
-        try {
-            console.log(`Printing to ${printerName}: ${localFilePath}`);
-            return await printerLib.print(localFilePath, {
-                printer: printerName,
-                win32: ['-print-settings "paper=A4,scale=90,fit"'] // 90%印刷
+        const printMethod = config.printMethod || 'pdf-to-printer';
+
+        if (printMethod === 'sumatra-direct') {
+            // SumatraPDFを直接呼び出す方式
+            return new Promise((resolve, reject) => {
+                const sumatraPath = config.sumatraPdfPath || 'C:\\Users\\jungs\\AppData\\Local\\SumatraPDF\\SumatraPDF.exe';
+
+                // SumatraPDFが存在するか確認
+                if (!fs.existsSync(sumatraPath)) {
+                    const error = new Error(`SumatraPDF not found at: ${sumatraPath}`);
+                    console.error('Print error:', error.message);
+                    writeLog(`印刷エラー: SumatraPDFが見つかりません (${sumatraPath})`, 'error');
+                    reject(error);
+                    return;
+                }
+
+                console.log(`Printing to ${printerName} using SumatraPDF: ${localFilePath}`);
+                writeLog(`印刷開始 (SumatraPDF直接): ${printerName}`, 'info');
+
+                const args = [
+                    '-print-to', printerName,
+                    '-print-settings', 'paper=A4,fit',
+                    localFilePath
+                ];
+
+                execFile(sumatraPath, args, (error, stdout, stderr) => {
+                    if (error) {
+                        console.error('SumatraPDF print error:', stderr || error.message);
+                        writeLog(`印刷エラー (SumatraPDF): ${error.message}`, 'error');
+                        reject(new Error(stderr || error.message));
+                    } else {
+                        console.log('SumatraPDF print success');
+                        writeLog(`印刷完了 (SumatraPDF直接): ${printerName}`, 'success');
+                        resolve(stdout);
+                    }
+                });
             });
-        } catch (error) {
-            console.error('Print error:', error);
-            writeLog(`印刷エラー: ${error.message}`, 'error');
-            throw error;
+        } else {
+            // pdf-to-printerライブラリを使う方式（デフォルト）
+            try {
+                console.log(`Printing to ${printerName} using pdf-to-printer: ${localFilePath}`);
+                writeLog(`印刷開始 (pdf-to-printer): ${printerName}`, 'info');
+
+                const result = await printerLib.print(localFilePath, {
+                    printer: printerName,
+                    win32: ['-print-settings "paper=A4,fit,shrink"']
+                });
+
+                writeLog(`印刷完了 (pdf-to-printer): ${printerName}`, 'success');
+                return result;
+            } catch (error) {
+                console.error('Print error:', error);
+                writeLog(`印刷エラー (pdf-to-printer): ${error.message}`, 'error');
+                throw error;
+            }
         }
     } else if (platform === 'darwin' || platform === 'linux') {
         // macOS / Linux は lp コマンドを使う（A4用紙サイズを指定）

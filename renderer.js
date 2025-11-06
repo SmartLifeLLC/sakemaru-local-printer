@@ -269,6 +269,8 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-s3-region').value = cfg.s3.region;
             document.getElementById('cfg-s3-accessKeyId').value = cfg.s3.accessKeyId;
             document.getElementById('cfg-s3-secretAccessKey').value = cfg.s3.secretAccessKey;
+            document.getElementById('cfg-printMethod').value = cfg.printMethod || 'pdf-to-printer';
+            document.getElementById('cfg-sumatraPdfPath').value = cfg.sumatraPdfPath || 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe';
         }).catch(() => alert('設定読み込み失敗'));
 
         // API接続テスト
@@ -328,6 +330,8 @@ window.addEventListener('DOMContentLoaded', () => {
                 printer1: currentCfg.printer1 || '',
                 printer2: currentCfg.printer2 || '',
                 printer3: currentCfg.printer3 || '',
+                printMethod: document.getElementById('cfg-printMethod').value,
+                sumatraPdfPath: document.getElementById('cfg-sumatraPdfPath').value,
                 s3: {
                     bucket: document.getElementById('cfg-s3-bucket').value,
                     region: document.getElementById('cfg-s3-region').value,

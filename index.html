@@ -340,6 +340,18 @@
             </div>
         </div>
 
+        <div class="section">
+            <h2>印刷設定</h2>
+            <label>印刷方式:</label>
+            <select id="cfg-printMethod">
+                <option value="pdf-to-printer">pdf-to-printer (デフォルト)</option>
+                <option value="sumatra-direct">SumatraPDF 直接呼び出し</option>
+            </select>
+
+            <label>SumatraPDF パス <small>(sumatra-direct選択時のみ使用)</small>:</label>
+            <input type="text" id="cfg-sumatraPdfPath" placeholder="C:\Program Files\SumatraPDF\SumatraPDF.exe" />
+        </div>
+
         <button id="btn-save-config" class="btn-secondary">💾 設定を保存</button>
     </div>
 </div>
