@@ -378,24 +378,74 @@ window.addEventListener('DOMContentLoaded', () => {
     // --- 旧設定ウィンドウ用処理（config.html） ---
     if (document.getElementById('cfg-pollInterval') && !document.querySelector('.tabs')) {
         const elems = {
-            pollInterval:      document.getElementById('cfg-pollInterval'),
-            apiHost:           document.getElementById('cfg-apiHost'),
-            apiToken:          document.getElementById('cfg-apiToken'),
-            printer0:          document.getElementById('cfg-printer0'),
-            printer1:          document.getElementById('cfg-printer1'),
-            printer2:          document.getElementById('cfg-printer2'),
-            printer3:          document.getElementById('cfg-printer3'),
-            loadPrintersBtn:   document.getElementById('btn-load-printers'),
-            testApiBtn:        document.getElementById('btn-test-api'),
-            apiTestResult:     document.getElementById('api-test-result'),
+            pollInterval:       document.getElementById('cfg-pollInterval'),
+            apiHost:            document.getElementById('cfg-apiHost'),
+            apiToken:           document.getElementById('cfg-apiToken'),
+            warehouseId:        document.getElementById('cfg-warehouseId'),
+            loadWarehousesBtn:  document.getElementById('btn-load-warehouses'),
+            printer0:           document.getElementById('cfg-printer0'),
+            printer1:           document.getElementById('cfg-printer1'),
+            printer2:           document.getElementById('cfg-printer2'),
+            printer3:           document.getElementById('cfg-printer3'),
+            loadPrintersBtn:    document.getElementById('btn-load-printers'),
+            testApiBtn:         document.getElementById('btn-test-api'),
+            apiTestResult:      document.getElementById('api-test-result'),
             s3: {
                 bucket:          document.getElementById('cfg-s3-bucket'),
                 region:          document.getElementById('cfg-s3-region'),
                 accessKeyId:     document.getElementById('cfg-s3-accessKeyId'),
                 secretAccessKey: document.getElementById('cfg-s3-secretAccessKey'),
             },
-            saveBtn:           document.getElementById('btn-save-config'),
+            saveBtn:            document.getElementById('btn-save-config'),
         };
+
+        // 倉庫一覧読み込み
+        elems.loadWarehousesBtn.addEventListener('click', async () => {
+            const apiHost = elems.apiHost.value;
+            const apiToken = elems.apiToken.value;
+
+            if (!apiHost || apiHost.trim() === '') {
+                alert('APIホストを入力してください');
+                return;
+            }
+
+            try {
+                const response = await fetch(`https://${apiHost}/api/printer/warehouses`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiToken}`
+                    },
+                    body: JSON.stringify({})
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                const warehouses = result.success && result.data && result.data.data ? result.data.data : [];
+
+                const currentValue = elems.warehouseId.value;
+                elems.warehouseId.innerHTML = '<option value="">（全倉庫）</option>';
+
+                warehouses.forEach(w => {
+                    const o = document.createElement('option');
+                    o.value = w.id;
+                    o.textContent = `${w.name} (ID: ${w.id})`;
+                    elems.warehouseId.appendChild(o);
+                });
+
+                // 前の値を復元
+                if (currentValue) {
+                    elems.warehouseId.value = currentValue;
+                }
+
+                alert(`${warehouses.length}件の倉庫を読み込みました`);
+            } catch (err) {
+                alert('倉庫一覧取得に失敗: ' + err.message);
+            }
+        });
 
         // プリンタ一覧読み込み
         elems.loadPrintersBtn.addEventListener('click', async () => {
@@ -490,6 +540,7 @@ window.addEventListener('DOMContentLoaded', () => {
             elems.pollInterval.value       = cfg.pollInterval;
             elems.apiHost.value            = cfg.apiHost;
             elems.apiToken.value           = cfg.apiToken || '';
+            elems.warehouseId.value        = cfg.warehouseId || '';
             elems.s3.bucket.value          = cfg.s3.bucket;
             elems.s3.region.value          = cfg.s3.region;
             elems.s3.accessKeyId.value     = cfg.s3.accessKeyId;
@@ -541,6 +592,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 pollInterval:   Number(elems.pollInterval.value),
                 apiHost:        elems.apiHost.value,
                 apiToken:       elems.apiToken.value,
+                warehouseId:    elems.warehouseId.value,
                 printer0:       elems.printer0.value,
                 printer1:       elems.printer1.value,
                 printer2:       elems.printer2.value,

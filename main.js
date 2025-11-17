@@ -52,6 +52,7 @@ const defaultConfig = {
     pollInterval: 5000,
     apiHost: '',
     apiToken: '',
+    warehouseId: '', // 倉庫ID（オプション、指定すると該当倉庫の印刷ジョブのみ取得）
     printer0: '',
     printer1: '',
     printer2: '',
@@ -279,9 +280,13 @@ async function pollTask() {
         }
 
         // APIエンドポイントを構築
-        const apiUrl = `https://${config.apiHost}/api/printer/tasks`;
+        const apiUrl = `https://${config.apiHost}/api/printer/polling`;
 
-        const requestBody = { printer_pc_id: ip };
+        // warehouse_idが設定されている場合のみリクエストボディに含める
+        const requestBody = {};
+        if (config.warehouseId) {
+            requestBody.warehouse_id = parseInt(config.warehouseId);
+        }
         console.log('Polling API:', apiUrl);
         console.log('Request body:', JSON.stringify(requestBody));
         console.log('Request headers:', headers);
@@ -306,15 +311,28 @@ async function pollTask() {
             throw new Error(`HTTP ${res.status} ${res.statusText}${errorDetail}`);
         }
 
-        const data = await res.json();
-        if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data });
+        const response = await res.json();
+        if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data: response });
 
-        // 新仕様（指示５）: 配列形式のジョブリスト
-        if (Array.isArray(data) && data.length > 0) {
+        // レスポンスから実際のデータを取得
+        const data = response.success && response.data && response.data.data ? response.data.data : null;
+
+        // 新API形式: {success: true, data: {data: [...]}} の場合
+        if (data && Array.isArray(data) && data.length > 0) {
             writeLog(`${data.length}個の印刷ジョブを受信しました`, 'info');
 
+            // APIレスポンスを内部形式に変換
+            const jobs = data.map(item => ({
+                file_id: item.id,
+                print_type: item.print_type,
+                file_url: item.file_path,
+                printer_id: item.printer_drivers?.printer_id ?? 0, // サーバーから送られたprinter_idを使用
+                warehouse_id: item.printer_drivers?.warehouse_id,
+                order: item.id // IDを順序として使用
+            }));
+
             // order順にソート
-            const sortedJobs = [...data].sort((a, b) => a.order - b.order);
+            const sortedJobs = [...jobs].sort((a, b) => a.order - b.order);
 
             // 並列ダウンロード（最大4つずつ）
             if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'downloading', count: sortedJobs.length });
@@ -324,7 +342,7 @@ async function pollTask() {
             // order順に印刷を実行
             for (const job of downloadedJobs) {
                 if (!job.success) {
-                    writeLog(`order ${job.order} のダウンロードに失敗、印刷をスキップ`, 'error');
+                    writeLog(`ID ${job.file_id} のダウンロードに失敗、印刷をスキップ`, 'error');
                     continue;
                 }
 
@@ -338,20 +356,34 @@ async function pollTask() {
                 }
 
                 if (printerName) {
-                    writeLog(`印刷開始: order=${job.order}, file_id=${job.file_id}, printer=${printerName}`, 'info');
+                    writeLog(`印刷開始: ID=${job.file_id}, type=${job.print_type}, warehouse=${job.warehouse_id}, printer=${printerName}`, 'info');
                     await printPdf(printerName, job.localPath);
                     fs.unlinkSync(job.localPath);
+
+                    // ステータス更新APIを呼び出し
+                    try {
+                        const statusUpdateUrl = `https://${config.apiHost}/api/printer/document-${job.print_type}-status`;
+                        await fetch(statusUpdateUrl, {
+                            method: 'POST',
+                            headers: headers,
+                            body: JSON.stringify({ id: job.file_id, status: 'END' })
+                        });
+                        writeLog(`ステータス更新完了: ID=${job.file_id}`, 'info');
+                    } catch (err) {
+                        writeLog(`ステータス更新失敗: ID=${job.file_id}, error=${err.message}`, 'error');
+                    }
+
                     if (statusWindow) {
                         statusWindow.webContents.send('poll-status', {
                             status: 'printed',
-                            order: job.order,
                             file_id: job.file_id,
+                            print_type: job.print_type,
                             printer: printerName
                         });
                     }
-                    writeLog(`印刷完了: order=${job.order}, file_id=${job.file_id}`, 'success');
+                    writeLog(`印刷完了: ID=${job.file_id}`, 'success');
                 } else {
-                    writeLog(`order ${job.order} のプリンタが設定されていません`, 'error');
+                    writeLog(`ID ${job.file_id} のプリンタが設定されていません`, 'error');
                 }
             }
 
