@@ -280,18 +280,21 @@ async function pollTask() {
         }
 
         // APIエンドポイントを構築
-        let apiUrl = `https://${config.apiHost}/api/printer/polling`;
+        const apiUrl = `https://${config.apiHost}/api/printer/polling`;
 
-        // warehouse_idが設定されている場合はクエリパラメータとして追加
+        // warehouse_idが設定されている場合のみリクエストボディに含める
+        const requestBody = {};
         if (config.warehouseId) {
-            apiUrl += `?warehouse_id=${parseInt(config.warehouseId)}`;
+            requestBody.warehouse_id = parseInt(config.warehouseId);
         }
         console.log('Polling API:', apiUrl);
+        console.log('Request body:', JSON.stringify(requestBody));
         console.log('Request headers:', headers);
 
         const res = await fetch(apiUrl, {
-            method: 'GET',
-            headers: headers
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(requestBody)
         });
 
         console.log('API Response Status:', res.status, res.statusText);

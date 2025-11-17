@@ -411,11 +411,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
             try {
                 const response = await fetch(`https://${apiHost}/api/printer/warehouses`, {
-                    method: 'GET',
+                    method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${apiToken}`
-                    }
+                    },
+                    body: JSON.stringify({})
                 });
 
                 if (!response.ok) {
