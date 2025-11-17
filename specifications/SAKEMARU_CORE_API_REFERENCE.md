@@ -259,7 +259,8 @@ POST /api/printer/document-picking-status
 
 ### リクエスト・レスポンス
 
-[伝票印刷ステータス更新](#3-post-伝票印刷ステータス更新)と同じ
+[POST /api/printer/document-picking-status
+](#3-post-伝票印刷ステータス更新)と同じ
 
 ---
 

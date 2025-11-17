@@ -280,35 +280,44 @@ async function pollTask() {
         }
 
         // APIエンドポイントを構築
-        const apiUrl = `https://${config.apiHost}/api/printer/polling`;
+        let apiUrl = `https://${config.apiHost}/api/printer/polling`;
 
-        // warehouse_idが設定されている場合のみリクエストボディに含める
-        const requestBody = {};
+        // warehouse_idが設定されている場合はクエリパラメータとして追加
         if (config.warehouseId) {
-            requestBody.warehouse_id = parseInt(config.warehouseId);
+            apiUrl += `?warehouse_id=${parseInt(config.warehouseId)}`;
         }
         console.log('Polling API:', apiUrl);
-        console.log('Request body:', JSON.stringify(requestBody));
         console.log('Request headers:', headers);
 
         const res = await fetch(apiUrl, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(requestBody)
+            method: 'GET',
+            headers: headers
         });
+
+        console.log('API Response Status:', res.status, res.statusText);
+        console.log('API Response Headers:', Object.fromEntries(res.headers.entries()));
 
         if (!res.ok) {
             // エラーレスポンスの詳細を取得
             let errorDetail = '';
             try {
                 const errorBody = await res.text();
-                errorDetail = errorBody ? ` - ${errorBody}` : '';
-                writeLog(`API エラー詳細: ${errorBody}`, 'error');
-                console.error('API Error Response Body:', errorBody);
+                errorDetail = errorBody ? ` - ${errorBody.substring(0, 500)}` : '';
+                writeLog(`API エラー (${res.status}): ${errorBody.substring(0, 200)}`, 'error');
+                console.error('API Error Response Body:', errorBody.substring(0, 1000));
             } catch (e) {
                 console.error('Failed to read error body:', e);
             }
             throw new Error(`HTTP ${res.status} ${res.statusText}${errorDetail}`);
+        }
+
+        // Content-Typeを確認
+        const contentType = res.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const textBody = await res.text();
+            writeLog(`API エラー: JSON以外のレスポンス (Content-Type: ${contentType})`, 'error');
+            console.error('Non-JSON Response:', textBody.substring(0, 500));
+            throw new Error(`Expected JSON response but got ${contentType}`);
         }
 
         const response = await res.json();
