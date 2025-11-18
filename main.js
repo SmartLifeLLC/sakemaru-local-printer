@@ -133,7 +133,7 @@ function writeLog(message, type = 'info') {
     // UIに送信
     if (mainWindow) {
         mainWindow.webContents.send('poll-status', {
-            status: type === 'error' ? 'error' : 'log',
+            status: 'log',
             message: message,
             type: type
         });
@@ -213,9 +213,9 @@ async function printPdf(printerName, localFilePath) {
             }
         }
     } else if (platform === 'darwin' || platform === 'linux') {
-        // macOS / Linux は lp コマンドを使う（A4用紙サイズを指定）
+        // macOS / Linux は lp コマンドを使う（A4用紙サイズを指定、片面印刷）
         return new Promise((resolve, reject) => {
-            const cmd = `lp -d "${printerName}" -o media=A4 "${localFilePath}"`;
+            const cmd = `lp -d "${printerName}" -o media=A4 -o sides=one-sided "${localFilePath}"`;
             exec(cmd, (error, stdout, stderr) => {
                 if (error) {
                     console.error('lp error:', stderr || error.message);
@@ -233,13 +233,20 @@ async function printPdf(printerName, localFilePath) {
 
 // S3ダウンロード
 async function downloadFromS3(s3Key) {
-    const s3 = new S3Client({ region: config.s3.region, credentials: config.s3 });
-    const cmd = new GetObjectCommand({ Bucket: config.s3.bucket, Key: s3Key });
-    const res = await s3.send(cmd);
-    const tmp = path.join(app.getPath('temp'), path.basename(s3Key));
-    const ws = fs.createWriteStream(tmp);
-    await new Promise((ok, ng) => res.Body.pipe(ws).on('finish', ok).on('error', ng));
-    return tmp;
+    try {
+        console.log(`S3ダウンロード開始: bucket=${config.s3.bucket}, key=${s3Key}`);
+        const s3 = new S3Client({ region: config.s3.region, credentials: config.s3 });
+        const cmd = new GetObjectCommand({ Bucket: config.s3.bucket, Key: s3Key });
+        const res = await s3.send(cmd);
+        const tmp = path.join(app.getPath('temp'), path.basename(s3Key));
+        const ws = fs.createWriteStream(tmp);
+        await new Promise((ok, ng) => res.Body.pipe(ws).on('finish', ok).on('error', ng));
+        console.log(`S3ダウンロード完了: ${tmp}`);
+        return tmp;
+    } catch (error) {
+        console.error(`S3ダウンロードエラー: bucket=${config.s3.bucket}, key=${s3Key}`, error);
+        throw new Error(`S3ダウンロード失敗 (${s3Key}): ${error.message}`);
+    }
 }
 
 // 並列ダウンロード処理（最大4つ並列）
@@ -254,6 +261,7 @@ async function downloadFilesInParallel(jobs) {
             return { ...job, localPath, success: true };
         } catch (err) {
             console.error(`Download failed for ${job.file_url}:`, err);
+            writeLog(`ダウンロード失敗: ${job.file_url} - ${err.message}`, 'error');
             return { ...job, localPath: null, success: false, error: err.message };
         }
     }
@@ -360,10 +368,19 @@ async function pollTask() {
             writeLog(`${sortedJobs.length}個のファイルをダウンロード中...`, 'info');
             const downloadedJobs = await downloadFilesInParallel(sortedJobs);
 
+            // ダウンロード結果をサマリー表示
+            const successCount = downloadedJobs.filter(j => j.success).length;
+            const failCount = downloadedJobs.filter(j => !j.success).length;
+            if (failCount > 0) {
+                writeLog(`ダウンロード結果: 成功=${successCount}, 失敗=${failCount}`, 'error');
+            } else {
+                writeLog(`ダウンロード完了: ${successCount}個のファイル`, 'success');
+            }
+
             // order順に印刷を実行
             for (const job of downloadedJobs) {
                 if (!job.success) {
-                    writeLog(`ID ${job.file_id} のダウンロードに失敗、印刷をスキップ`, 'error');
+                    writeLog(`印刷スキップ: ID=${job.file_id} (ダウンロード失敗: ${job.error})`, 'error');
                     continue;
                 }
 
@@ -471,7 +488,7 @@ function startPolling() {
     }
 
     // 倉庫設定チェック（v2.1以降は必須）
-    if (!config.warehouseId || config.warehouseId.trim() === '') {
+    if (!config.warehouseId || String(config.warehouseId).trim() === '') {
         writeLog('エラー: 倉庫が設定されていません。ポーリングを開始できません', 'error');
 
         // ダイアログを表示（メインウィンドウがある場合のみ）
@@ -762,7 +779,7 @@ function checkAutoStartConditions() {
     const hasApiHost = config.apiHost && config.apiHost.trim() !== '';
 
     // 倉庫設定チェック（v2.1以降は必須）
-    const hasWarehouse = config.warehouseId && config.warehouseId.trim() !== '';
+    const hasWarehouse = config.warehouseId && String(config.warehouseId).trim() !== '';
 
     return hasPrinter && hasApiHost && hasWarehouse;
 }

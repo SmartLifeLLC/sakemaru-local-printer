@@ -49,7 +49,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 const cfg = await window.electronAPI.loadConfig();
 
                 // 倉庫設定チェック
-                if (!cfg.warehouseId || cfg.warehouseId.trim() === '') {
+                if (!cfg.warehouseId || String(cfg.warehouseId).trim() === '') {
                     addLogLine('エラー: 倉庫が設定されていません', 'error');
                     alert('❌ エラー: 倉庫が設定されていません\n\n「⚙️ 酒まる通信設定」タブで倉庫を設定してください。');
                     return;
@@ -133,7 +133,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 addLogLine(msg, 'success');
             } else if (data.status === 'error') {
                 lastPollTime.textContent = new Date().toLocaleString('ja-JP');
-                const errorMsg = data.error || '不明なエラーが発生しました';
+                const errorMsg = data.message || data.error || '不明なエラーが発生しました';
                 addLogLine('エラー: ' + errorMsg, 'error');
             }
         });
@@ -306,7 +306,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
             // 現在の倉庫設定を表示
             const warehouseDisplay = document.getElementById('current-warehouse-display');
-            if (cfg.warehouseId && cfg.warehouseId.trim() !== '') {
+            if (cfg.warehouseId && String(cfg.warehouseId).trim() !== '') {
                 warehouseDisplay.textContent = `ID: ${cfg.warehouseId}`;
                 warehouseDisplay.style.color = '#667eea';
 
