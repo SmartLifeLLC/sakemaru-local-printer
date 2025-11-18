@@ -335,10 +335,8 @@ async function pollTask() {
                 file_id: item.id,
                 print_type: item.print_type,
                 file_url: item.file_path,
-                // v2.1: printer_index (後方互換性のためprinter_idもサポート)
-                printer_index: item.printer_drivers?.printer_index
-                            ?? item.printer_drivers?.printer_id
-                            ?? 0,
+                // v2.1: printer_index (0-3、未設定の場合は0)
+                printer_index: item.printer_drivers?.printer_index ?? 0,
                 warehouse_id: item.printer_drivers?.warehouse_id,
                 order: item.id // IDを順序として使用
             }));
