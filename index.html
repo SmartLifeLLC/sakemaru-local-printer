@@ -311,6 +311,14 @@
             <label>API認証トークン (Bearer):</label>
             <input type="password" id="cfg-apiToken" placeholder="認証トークンを入力してください" />
 
+            <label>倉庫 <small>(オプション、未設定の場合は全倉庫のジョブを取得)</small>:</label>
+            <div style="display: flex; gap: 10px; align-items: flex-start;">
+                <select id="cfg-warehouseId" style="flex: 1;">
+                    <option value="">（全倉庫）</option>
+                </select>
+                <button id="btn-load-warehouses" type="button" style="width: auto; margin: 0;">倉庫一覧を読み込み</button>
+            </div>
+
             <button id="btn-test-api" type="button" style="margin-top:8px;">API接続テスト</button>
             <div id="api-test-result" style="margin-top:8px; padding:8px; display:none; border-radius:8px;"></div>
         </div>
