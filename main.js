@@ -1,7 +1,7 @@
 // main.js
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -52,6 +52,7 @@ const defaultConfig = {
     pollInterval: 5000,
     apiHost: '',
     apiToken: '',
+    warehouseId: '', // 倉庫ID（オプション、指定すると該当倉庫の印刷ジョブのみ取得）
     printer0: '',
     printer1: '',
     printer2: '',
@@ -279,42 +280,70 @@ async function pollTask() {
         }
 
         // APIエンドポイントを構築
-        const apiUrl = `https://${config.apiHost}/api/printer/tasks`;
+        let apiUrl = `https://${config.apiHost}/api/printer/polling`;
 
-        const requestBody = { printer_pc_id: ip };
+        // warehouse_idが設定されている場合はクエリパラメータとして追加 (v2.0仕様)
+        if (config.warehouseId) {
+            apiUrl += `?warehouse_id=${parseInt(config.warehouseId)}`;
+        }
         console.log('Polling API:', apiUrl);
-        console.log('Request body:', JSON.stringify(requestBody));
         console.log('Request headers:', headers);
 
         const res = await fetch(apiUrl, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(requestBody)
+            method: 'GET',
+            headers: headers
         });
+
+        console.log('API Response Status:', res.status, res.statusText);
+        console.log('API Response Headers:', Object.fromEntries(res.headers.entries()));
 
         if (!res.ok) {
             // エラーレスポンスの詳細を取得
             let errorDetail = '';
             try {
                 const errorBody = await res.text();
-                errorDetail = errorBody ? ` - ${errorBody}` : '';
-                writeLog(`API エラー詳細: ${errorBody}`, 'error');
-                console.error('API Error Response Body:', errorBody);
+                errorDetail = errorBody ? ` - ${errorBody.substring(0, 500)}` : '';
+                writeLog(`API エラー (${res.status}): ${errorBody.substring(0, 200)}`, 'error');
+                console.error('API Error Response Body:', errorBody.substring(0, 1000));
             } catch (e) {
                 console.error('Failed to read error body:', e);
             }
             throw new Error(`HTTP ${res.status} ${res.statusText}${errorDetail}`);
         }
 
-        const data = await res.json();
-        if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data });
+        // Content-Typeを確認
+        const contentType = res.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const textBody = await res.text();
+            writeLog(`API エラー: JSON以外のレスポンス (Content-Type: ${contentType})`, 'error');
+            console.error('Non-JSON Response:', textBody.substring(0, 500));
+            throw new Error(`Expected JSON response but got ${contentType}`);
+        }
 
-        // 新仕様（指示５）: 配列形式のジョブリスト
-        if (Array.isArray(data) && data.length > 0) {
+        const response = await res.json();
+        if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data: response });
+
+        // レスポンスから実際のデータを取得
+        // v2.1: {success: true, data: [...], meta: {...}} 形式
+        const data = response.success && response.data && Array.isArray(response.data) ? response.data : null;
+
+        // 印刷ジョブがある場合
+        if (data && Array.isArray(data) && data.length > 0) {
             writeLog(`${data.length}個の印刷ジョブを受信しました`, 'info');
 
+            // APIレスポンスを内部形式に変換
+            const jobs = data.map(item => ({
+                file_id: item.id,
+                print_type: item.print_type,
+                file_url: item.file_path,
+                // v2.1: printer_index (0-3、未設定の場合は0)
+                printer_index: item.printer_drivers?.printer_index ?? 0,
+                warehouse_id: item.printer_drivers?.warehouse_id,
+                order: item.id // IDを順序として使用
+            }));
+
             // order順にソート
-            const sortedJobs = [...data].sort((a, b) => a.order - b.order);
+            const sortedJobs = [...jobs].sort((a, b) => a.order - b.order);
 
             // 並列ダウンロード（最大4つずつ）
             if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'downloading', count: sortedJobs.length });
@@ -324,34 +353,49 @@ async function pollTask() {
             // order順に印刷を実行
             for (const job of downloadedJobs) {
                 if (!job.success) {
-                    writeLog(`order ${job.order} のダウンロードに失敗、印刷をスキップ`, 'error');
+                    writeLog(`ID ${job.file_id} のダウンロードに失敗、印刷をスキップ`, 'error');
                     continue;
                 }
 
-                const printerNum = Number(job.printer_id);
-                let printerName = config[`printer${printerNum}`];
+                // v2.1: printer_indexを使用
+                const printerIndex = Number(job.printer_index);
+                let printerName = config[`printer${printerIndex}`];
 
                 // 指定番号のプリンタが未設定の場合、printer0にフォールバック
-                if (!printerName && printerNum !== 0) {
+                if (!printerName && printerIndex !== 0) {
                     printerName = config.printer0;
-                    writeLog(`プリンタ${printerNum}が未設定、プリンタ0にフォールバック`, 'info');
+                    writeLog(`プリンタ${printerIndex}が未設定、プリンタ0にフォールバック`, 'info');
                 }
 
                 if (printerName) {
-                    writeLog(`印刷開始: order=${job.order}, file_id=${job.file_id}, printer=${printerName}`, 'info');
+                    writeLog(`印刷開始: ID=${job.file_id}, type=${job.print_type}, warehouse=${job.warehouse_id}, printer=${printerName}`, 'info');
                     await printPdf(printerName, job.localPath);
                     fs.unlinkSync(job.localPath);
+
+                    // ステータス更新APIを呼び出し
+                    try {
+                        const statusUpdateUrl = `https://${config.apiHost}/api/printer/document-${job.print_type}-status`;
+                        await fetch(statusUpdateUrl, {
+                            method: 'POST',
+                            headers: headers,
+                            body: JSON.stringify({ id: job.file_id, status: 'END' })
+                        });
+                        writeLog(`ステータス更新完了: ID=${job.file_id}`, 'info');
+                    } catch (err) {
+                        writeLog(`ステータス更新失敗: ID=${job.file_id}, error=${err.message}`, 'error');
+                    }
+
                     if (statusWindow) {
                         statusWindow.webContents.send('poll-status', {
                             status: 'printed',
-                            order: job.order,
                             file_id: job.file_id,
+                            print_type: job.print_type,
                             printer: printerName
                         });
                     }
-                    writeLog(`印刷完了: order=${job.order}, file_id=${job.file_id}`, 'success');
+                    writeLog(`印刷完了: ID=${job.file_id}`, 'success');
                 } else {
-                    writeLog(`order ${job.order} のプリンタが設定されていません`, 'error');
+                    writeLog(`ID ${job.file_id} のプリンタが設定されていません`, 'error');
                 }
             }
 
@@ -415,9 +459,27 @@ function startPolling() {
         writeLog('ポーリングは既に実行中です', 'info');
         return;
     }
+
+    // 倉庫設定チェック（v2.1以降は必須）
+    if (!config.warehouseId || config.warehouseId.trim() === '') {
+        writeLog('エラー: 倉庫が設定されていません。ポーリングを開始できません', 'error');
+
+        // ダイアログを表示（メインウィンドウがある場合のみ）
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            dialog.showMessageBox(mainWindow, {
+                type: 'error',
+                title: 'ポーリング開始エラー',
+                message: '倉庫が設定されていません',
+                detail: '「⚙️ 酒まる通信設定」タブで倉庫を設定してから、再度ポーリングを開始してください。',
+                buttons: ['OK']
+            });
+        }
+        return;
+    }
+
     isPolling = true;
     console.log('Starting polling...');
-    writeLog(`ポーリング開始: ${config.apiHost} (間隔: ${config.pollInterval}ms)`, 'info');
+    writeLog(`ポーリング開始: ${config.apiHost} (間隔: ${config.pollInterval}ms, 倉庫ID: ${config.warehouseId})`, 'info');
     pollLoop();
     updateTrayMenu(); // トレイメニューを更新
 }
@@ -689,7 +751,10 @@ function checkAutoStartConditions() {
     // API設定チェック
     const hasApiHost = config.apiHost && config.apiHost.trim() !== '';
 
-    return hasPrinter && hasApiHost;
+    // 倉庫設定チェック（v2.1以降は必須）
+    const hasWarehouse = config.warehouseId && config.warehouseId.trim() !== '';
+
+    return hasPrinter && hasApiHost && hasWarehouse;
 }
 
 // メニューバー設定 & アプリ起動
@@ -767,7 +832,7 @@ app.whenReady().then(() => {
             }
         }, 1000);
     } else {
-        writeLog('プリンターまたはAPI設定が不足しています。設定を確認してください', 'error');
+        writeLog('設定が不足しています。プリンター、API、倉庫の設定を確認してください', 'error');
     }
 });
 
@@ -861,11 +926,10 @@ ipcMain.handle('download-sample-pdf', async () => {
     return downloadFromS3('vouchers/sample.pdf');
 });
 
-// API接続テスト
+// API接続テスト (v2.1: GET /api/printer/test エンドポイント使用)
 ipcMain.handle('test-api-connection', async (_e, testConfig) => {
     try {
-        const apiUrl = `https://${testConfig.apiHost}/api/printer/tasks`;
-        const ip = getLocalIp();
+        const apiUrl = `https://${testConfig.apiHost}/api/printer/test`;
         const headers = { 'Content-Type': 'application/json' };
 
         if (testConfig.apiToken) {
@@ -875,9 +939,8 @@ ipcMain.handle('test-api-connection', async (_e, testConfig) => {
         console.log('Testing API connection to:', apiUrl);
 
         const res = await fetch(apiUrl, {
-            method: 'POST',
+            method: 'GET',
             headers: headers,
-            body: JSON.stringify({ printer_pc_id: ip }),
             signal: AbortSignal.timeout(10000) // 10秒タイムアウト
         });
 
@@ -892,11 +955,17 @@ ipcMain.handle('test-api-connection', async (_e, testConfig) => {
             };
         }
 
-        // 正常なレスポンス
+        // 正常なレスポンス - サーバー情報を取得
+        const result = await res.json();
+        const serverInfo = result.success && result.data ? result.data : {};
+
         return {
             success: true,
             status: res.status,
-            message: 'API接続に成功しました'
+            message: 'API接続に成功しました',
+            serverVersion: serverInfo.server_version || 'unknown',
+            clientId: serverInfo.client_id || null,
+            timestamp: serverInfo.timestamp || null
         };
 
     } catch (err) {

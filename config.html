@@ -20,6 +20,12 @@
 <label>API トークン:
   <input type="password" id="cfg-apiToken" size="50"/>
 </label>
+<label>倉庫 <small>(必須未設定の場合は全倉庫のジョブを取得)</small>:
+  <select id="cfg-warehouseId">
+    <option value="">選択</option>
+  </select>
+  <button id="btn-load-warehouses" type="button" style="margin-left:8px;">倉庫一覧を読み込み</button>
+</label>
 <button id="btn-test-api" type="button" style="margin-top:8px;">API接続テスト</button>
 <div id="api-test-result" style="margin-top:8px; padding:8px; display:none;"></div>
 
