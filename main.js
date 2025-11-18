@@ -321,11 +321,21 @@ async function pollTask() {
         }
 
         const response = await res.json();
+        console.log('API Response Body:', JSON.stringify(response).substring(0, 500));
         if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data: response });
+
+        // API エラーチェック
+        if (!response.success) {
+            const errorMsg = response.debug_message || response.message || 'Unknown error';
+            writeLog(`APIエラー: ${errorMsg}`, 'error');
+            console.error('API Error Response:', JSON.stringify(response, null, 2));
+            return; // エラーの場合は処理を終了
+        }
 
         // レスポンスから実際のデータを取得
         // v2.1: {success: true, data: [...], meta: {...}} 形式
         const data = response.success && response.data && Array.isArray(response.data) ? response.data : null;
+        console.log('Parsed data:', data ? `Array with ${data.length} items` : 'null or empty');
 
         // 印刷ジョブがある場合
         if (data && Array.isArray(data) && data.length > 0) {
@@ -402,7 +412,7 @@ async function pollTask() {
             writeLog('すべての印刷ジョブが完了しました', 'success');
         }
         // 旧仕様: printer_numberが指定されている場合
-        else if (data.file && data.printer_number) {
+        else if (data && data.file && data.printer_number) {
             const printerNum = Number(data.printer_number);
             let printerName = config[`printer${printerNum}`];
 
@@ -421,7 +431,7 @@ async function pollTask() {
             }
         }
         // 旧仕様: data.printerが配列の場合
-        else if (Array.isArray(data.printer) && data.file) {
+        else if (data && Array.isArray(data.printer) && data.file) {
             const localPdf = await downloadFromS3(data.file);
             for (const name of data.printer) await printPdf(name, localPdf);
             fs.unlinkSync(localPdf);
@@ -904,15 +914,13 @@ ipcMain.handle('save-config', async (_e, newCfg) => {
 
     writeLog(`API設定を更新: ${config.apiHost}`, 'info');
 
-    // ポーリングを停止
-    stopPolling();
-    writeLog('ポーリングを停止しました', 'info');
+    // ポーリングを停止（自動再開はしない）
+    if (isPolling) {
+        stopPolling();
+        writeLog('ポーリングを停止しました（設定保存のため）', 'info');
+    }
 
-    // 少し待ってからポーリング再開
-    setTimeout(() => {
-        startPolling();
-        writeLog('新しい設定でポーリングを再開しました', 'success');
-    }, 500);
+    writeLog('設定を保存しました。ポーリングは手動で開始してください。', 'success');
 
     return true;
 });

@@ -446,7 +446,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     `⚠️ API接続テストが失敗しました\n\n` +
                     `エラー: ${testResult.error}\n\n` +
                     `このまま保存しますか？\n` +
-                    `(保存するとポーリングが再起動されますが、正常に動作しない可能性があります)`
+                    `(ポーリングは自動で開始されません。手動で開始してください)`
                 );
                 if (!confirmSave) {
                     return;
@@ -454,10 +454,10 @@ window.addEventListener('DOMContentLoaded', () => {
             }
 
             // 設定変更の確認
-            if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {
+            if (confirm('設定を保存しますか？\n\nポーリングが実行中の場合は停止されます。\n保存後、必要に応じて手動でポーリングを開始してください。')) {
                 window.electronAPI.saveConfig(newCfg)
                     .then(() => {
-                        alert('設定を保存しました。\nポーリングが再起動されました。');
+                        alert('設定を保存しました。\n\nポーリングを開始する場合は、「🍶 酒まる印刷」タブから開始ボタンをクリックしてください。');
                     })
                     .catch(() => alert('設定保存に失敗しました'));
             }
@@ -718,7 +718,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     `⚠️ API接続テストが失敗しました\n\n` +
                     `エラー: ${testResult.error}\n\n` +
                     `このまま保存しますか？\n` +
-                    `(保存するとポーリングが再起動されますが、正常に動作しない可能性があります)`
+                    `(ポーリングは自動で開始されません。手動で開始してください)`
                 );
                 if (!confirmSave) {
                     return;
@@ -726,10 +726,10 @@ window.addEventListener('DOMContentLoaded', () => {
             }
 
             // 設定変更の確認
-            if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {
+            if (confirm('設定を保存しますか？\n\nポーリングが実行中の場合は停止されます。\n保存後、必要に応じて手動でポーリングを開始してください。')) {
                 window.electronAPI.saveConfig(newCfg)
                     .then(() => {
-                        alert('設定を保存しました。\nポーリングが再起動されました。');
+                        alert('設定を保存しました。\n\nポーリングを開始する場合は、「🍶 酒まる印刷」タブから開始ボタンをクリックしてください。');
                     })
                     .catch(() => alert('設定保存に失敗しました'));
             }
