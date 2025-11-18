@@ -49,7 +49,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 const cfg = await window.electronAPI.loadConfig();
 
                 // 倉庫設定チェック
-                if (!cfg.warehouseId || cfg.warehouseId.trim() === '') {
+                if (!cfg.warehouseId || String(cfg.warehouseId).trim() === '') {
                     addLogLine('エラー: 倉庫が設定されていません', 'error');
                     alert('❌ エラー: 倉庫が設定されていません\n\n「⚙️ 酒まる通信設定」タブで倉庫を設定してください。');
                     return;
@@ -133,7 +133,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 addLogLine(msg, 'success');
             } else if (data.status === 'error') {
                 lastPollTime.textContent = new Date().toLocaleString('ja-JP');
-                const errorMsg = data.error || '不明なエラーが発生しました';
+                const errorMsg = data.message || data.error || '不明なエラーが発生しました';
                 addLogLine('エラー: ' + errorMsg, 'error');
             }
         });
@@ -292,7 +292,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // --- 設定タブ用処理（index.html内のタブ） ---
     if (document.getElementById('cfg-pollInterval') && document.querySelector('.tabs')) {
         // 初期ロード時に設定を読み込み
-        window.electronAPI.loadConfig().then(cfg => {
+        window.electronAPI.loadConfig().then(async cfg => {
             document.getElementById('cfg-pollInterval').value = cfg.pollInterval;
             document.getElementById('cfg-apiHost').value = cfg.apiHost;
             document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
@@ -303,7 +303,58 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-s3-secretAccessKey').value = cfg.s3.secretAccessKey;
             document.getElementById('cfg-printMethod').value = cfg.printMethod || 'pdf-to-printer';
             document.getElementById('cfg-sumatraPdfPath').value = cfg.sumatraPdfPath || 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe';
+
+            // 現在の倉庫設定を表示
+            const warehouseDisplay = document.getElementById('current-warehouse-display');
+            if (cfg.warehouseId && String(cfg.warehouseId).trim() !== '') {
+                warehouseDisplay.textContent = `ID: ${cfg.warehouseId}`;
+                warehouseDisplay.style.color = '#667eea';
+
+                // 倉庫一覧を取得して倉庫名を表示
+                if (cfg.apiHost && cfg.apiHost.trim() !== '') {
+                    try {
+                        const response = await fetch(`https://${cfg.apiHost}/api/printer/warehouses`, {
+                            method: 'GET',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${cfg.apiToken || ''}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            const warehouses = result.success && result.data ? result.data : [];
+                            const warehouse = warehouses.find(w => w.id == cfg.warehouseId);
+
+                            if (warehouse) {
+                                warehouseDisplay.textContent = `ID: ${cfg.warehouseId} - ${warehouse.name}`;
+                            }
+                        }
+                    } catch (err) {
+                        console.log('倉庫情報取得失敗:', err.message);
+                    }
+                }
+            } else {
+                warehouseDisplay.textContent = '全倉庫';
+                warehouseDisplay.style.color = '#999';
+            }
         }).catch(() => alert('設定読み込み失敗'));
+
+        // 倉庫セレクトボックスの変更イベント
+        document.getElementById('cfg-warehouseId').addEventListener('change', (e) => {
+            const warehouseDisplay = document.getElementById('current-warehouse-display');
+            const selectedOption = e.target.selectedOptions[0];
+
+            if (e.target.value === '') {
+                // 全倉庫を選択した場合
+                warehouseDisplay.textContent = '全倉庫';
+                warehouseDisplay.style.color = '#999';
+            } else {
+                // 特定の倉庫を選択した場合
+                warehouseDisplay.textContent = selectedOption.textContent;
+                warehouseDisplay.style.color = '#667eea';
+            }
+        });
 
         // 倉庫一覧読み込み
         document.getElementById('btn-load-warehouses').addEventListener('click', async () => {
@@ -345,6 +396,13 @@ window.addEventListener('DOMContentLoaded', () => {
                 // 前の値を復元
                 if (currentValue) {
                     warehouseSelect.value = currentValue;
+                    // 現在の倉庫設定表示も更新
+                    const selectedWarehouse = warehouses.find(w => w.id == currentValue);
+                    const warehouseDisplay = document.getElementById('current-warehouse-display');
+                    if (selectedWarehouse) {
+                        warehouseDisplay.textContent = `${selectedWarehouse.name} (ID: ${currentValue})`;
+                        warehouseDisplay.style.color = '#667eea';
+                    }
                 }
 
                 alert(`${warehouses.length}件の倉庫を読み込みました`);
@@ -446,7 +504,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     `⚠️ API接続テストが失敗しました\n\n` +
                     `エラー: ${testResult.error}\n\n` +
                     `このまま保存しますか？\n` +
-                    `(保存するとポーリングが再起動されますが、正常に動作しない可能性があります)`
+                    `(ポーリングは自動で開始されません。手動で開始してください)`
                 );
                 if (!confirmSave) {
                     return;
@@ -454,10 +512,10 @@ window.addEventListener('DOMContentLoaded', () => {
             }
 
             // 設定変更の確認
-            if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {
+            if (confirm('設定を保存しますか？\n\nポーリングが実行中の場合は停止されます。\n保存後、必要に応じて手動でポーリングを開始してください。')) {
                 window.electronAPI.saveConfig(newCfg)
                     .then(() => {
-                        alert('設定を保存しました。\nポーリングが再起動されました。');
+                        alert('設定を保存しました。\n\nポーリングを開始する場合は、「🍶 酒まる印刷」タブから開始ボタンをクリックしてください。');
                     })
                     .catch(() => alert('設定保存に失敗しました'));
             }
@@ -718,7 +776,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     `⚠️ API接続テストが失敗しました\n\n` +
                     `エラー: ${testResult.error}\n\n` +
                     `このまま保存しますか？\n` +
-                    `(保存するとポーリングが再起動されますが、正常に動作しない可能性があります)`
+                    `(ポーリングは自動で開始されません。手動で開始してください)`
                 );
                 if (!confirmSave) {
                     return;
@@ -726,10 +784,10 @@ window.addEventListener('DOMContentLoaded', () => {
             }
 
             // 設定変更の確認
-            if (confirm('設定を保存しますか？\n\n保存後、ポーリングが自動的に再起動されます。')) {
+            if (confirm('設定を保存しますか？\n\nポーリングが実行中の場合は停止されます。\n保存後、必要に応じて手動でポーリングを開始してください。')) {
                 window.electronAPI.saveConfig(newCfg)
                     .then(() => {
-                        alert('設定を保存しました。\nポーリングが再起動されました。');
+                        alert('設定を保存しました。\n\nポーリングを開始する場合は、「🍶 酒まる印刷」タブから開始ボタンをクリックしてください。');
                     })
                     .catch(() => alert('設定保存に失敗しました'));
             }
