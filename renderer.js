@@ -315,6 +315,22 @@ window.addEventListener('DOMContentLoaded', () => {
             }
         }).catch(() => alert('設定読み込み失敗'));
 
+        // 倉庫セレクトボックスの変更イベント
+        document.getElementById('cfg-warehouseId').addEventListener('change', (e) => {
+            const warehouseDisplay = document.getElementById('current-warehouse-display');
+            const selectedOption = e.target.selectedOptions[0];
+
+            if (e.target.value === '') {
+                // 全倉庫を選択した場合
+                warehouseDisplay.textContent = '全倉庫';
+                warehouseDisplay.style.color = '#999';
+            } else {
+                // 特定の倉庫を選択した場合
+                warehouseDisplay.textContent = selectedOption.textContent;
+                warehouseDisplay.style.color = '#667eea';
+            }
+        });
+
         // 倉庫一覧読み込み
         document.getElementById('btn-load-warehouses').addEventListener('click', async () => {
             const apiHost = document.getElementById('cfg-apiHost').value;
