@@ -335,7 +335,10 @@ async function pollTask() {
                 file_id: item.id,
                 print_type: item.print_type,
                 file_url: item.file_path,
-                printer_id: item.printer_drivers?.printer_id ?? 0, // サーバーから送られたprinter_idを使用
+                // v2.1: printer_index (後方互換性のためprinter_idもサポート)
+                printer_index: item.printer_drivers?.printer_index
+                            ?? item.printer_drivers?.printer_id
+                            ?? 0,
                 warehouse_id: item.printer_drivers?.warehouse_id,
                 order: item.id // IDを順序として使用
             }));
@@ -355,13 +358,14 @@ async function pollTask() {
                     continue;
                 }
 
-                const printerNum = Number(job.printer_id);
-                let printerName = config[`printer${printerNum}`];
+                // v2.1: printer_indexを使用
+                const printerIndex = Number(job.printer_index);
+                let printerName = config[`printer${printerIndex}`];
 
                 // 指定番号のプリンタが未設定の場合、printer0にフォールバック
-                if (!printerName && printerNum !== 0) {
+                if (!printerName && printerIndex !== 0) {
                     printerName = config.printer0;
-                    writeLog(`プリンタ${printerNum}が未設定、プリンタ0にフォールバック`, 'info');
+                    writeLog(`プリンタ${printerIndex}が未設定、プリンタ0にフォールバック`, 'info');
                 }
 
                 if (printerName) {
