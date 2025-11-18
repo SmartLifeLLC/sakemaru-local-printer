@@ -303,6 +303,16 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-s3-secretAccessKey').value = cfg.s3.secretAccessKey;
             document.getElementById('cfg-printMethod').value = cfg.printMethod || 'pdf-to-printer';
             document.getElementById('cfg-sumatraPdfPath').value = cfg.sumatraPdfPath || 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe';
+
+            // 現在の倉庫設定を表示
+            const warehouseDisplay = document.getElementById('current-warehouse-display');
+            if (cfg.warehouseId && cfg.warehouseId.trim() !== '') {
+                warehouseDisplay.textContent = `ID: ${cfg.warehouseId}`;
+                warehouseDisplay.style.color = '#667eea';
+            } else {
+                warehouseDisplay.textContent = '全倉庫';
+                warehouseDisplay.style.color = '#999';
+            }
         }).catch(() => alert('設定読み込み失敗'));
 
         // 倉庫一覧読み込み
@@ -345,6 +355,13 @@ window.addEventListener('DOMContentLoaded', () => {
                 // 前の値を復元
                 if (currentValue) {
                     warehouseSelect.value = currentValue;
+                    // 現在の倉庫設定表示も更新
+                    const selectedWarehouse = warehouses.find(w => w.id == currentValue);
+                    const warehouseDisplay = document.getElementById('current-warehouse-display');
+                    if (selectedWarehouse) {
+                        warehouseDisplay.textContent = `${selectedWarehouse.name} (ID: ${currentValue})`;
+                        warehouseDisplay.style.color = '#667eea';
+                    }
                 }
 
                 alert(`${warehouses.length}件の倉庫を読み込みました`);

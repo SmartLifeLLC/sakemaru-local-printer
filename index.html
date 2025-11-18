@@ -312,6 +312,14 @@
             <input type="password" id="cfg-apiToken" placeholder="認証トークンを入力してください" />
 
             <label>倉庫 <small>(オプション、未設定の場合は全倉庫のジョブを取得)</small>:</label>
+
+            <div class="status-box" style="margin-bottom: 10px;">
+                <div class="status-item">
+                    <span class="status-label">現在の倉庫設定:</span>
+                    <span id="current-warehouse-display" class="status-value">読み込み中...</span>
+                </div>
+            </div>
+
             <div style="display: flex; gap: 10px; align-items: flex-start;">
                 <select id="cfg-warehouseId" style="flex: 1;">
                     <option value="">（全倉庫）</option>
