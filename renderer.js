@@ -45,16 +45,47 @@ window.addEventListener('DOMContentLoaded', () => {
         // ポーリング開始
         startBtn.addEventListener('click', async () => {
             try {
+                // 設定を読み込んで検証
+                const cfg = await window.electronAPI.loadConfig();
+
+                // 倉庫設定チェック
+                if (!cfg.warehouseId || cfg.warehouseId.trim() === '') {
+                    addLogLine('エラー: 倉庫が設定されていません', 'error');
+                    alert('❌ エラー: 倉庫が設定されていません\n\n「⚙️ 酒まる通信設定」タブで倉庫を設定してください。');
+                    return;
+                }
+
+                // API接続テスト
+                addLogLine('API接続をテスト中...', 'info');
+                const testResult = await window.electronAPI.testApiConnection({
+                    apiHost: cfg.apiHost,
+                    apiToken: cfg.apiToken
+                });
+
+                if (!testResult.success) {
+                    addLogLine(`API接続テスト失敗: ${testResult.error}`, 'error');
+                    const confirmStart = confirm(
+                        '⚠️ API接続テストが失敗しました\n\n' +
+                        `エラー: ${testResult.error}\n\n` +
+                        'このままポーリングを開始しますか？\n' +
+                        '(正常に動作しない可能性があります)'
+                    );
+                    if (!confirmStart) {
+                        return;
+                    }
+                }
+
+                // ポーリング開始
                 await window.electronAPI.startPolling();
                 pollingStatus.textContent = '動作中';
                 pollingStatus.style.color = '#28a745';
                 startBtn.style.display = 'none';
                 stopBtn.style.display = '';
                 addLogLine('ポーリングを開始しました', 'success');
-                alert('ポーリングを開始しました');
+                alert('✅ ポーリングを開始しました');
             } catch (e) {
                 addLogLine('ポーリング開始に失敗: ' + e.message, 'error');
-                alert('ポーリング開始に失敗: ' + e.message);
+                alert('❌ ポーリング開始に失敗: ' + e.message);
             }
         });
 
@@ -265,6 +296,7 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-pollInterval').value = cfg.pollInterval;
             document.getElementById('cfg-apiHost').value = cfg.apiHost;
             document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
+            document.getElementById('cfg-warehouseId').value = cfg.warehouseId || '';
             document.getElementById('cfg-s3-bucket').value = cfg.s3.bucket;
             document.getElementById('cfg-s3-region').value = cfg.s3.region;
             document.getElementById('cfg-s3-accessKeyId').value = cfg.s3.accessKeyId;
@@ -272,6 +304,54 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-printMethod').value = cfg.printMethod || 'pdf-to-printer';
             document.getElementById('cfg-sumatraPdfPath').value = cfg.sumatraPdfPath || 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe';
         }).catch(() => alert('設定読み込み失敗'));
+
+        // 倉庫一覧読み込み
+        document.getElementById('btn-load-warehouses').addEventListener('click', async () => {
+            const apiHost = document.getElementById('cfg-apiHost').value;
+            const apiToken = document.getElementById('cfg-apiToken').value;
+
+            if (!apiHost || apiHost.trim() === '') {
+                alert('APIホストを入力してください');
+                return;
+            }
+
+            try {
+                const response = await fetch(`https://${apiHost}/api/printer/warehouses`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiToken}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                const warehouses = result.success && result.data ? result.data : [];
+
+                const warehouseSelect = document.getElementById('cfg-warehouseId');
+                const currentValue = warehouseSelect.value;
+                warehouseSelect.innerHTML = '<option value="">（全倉庫）</option>';
+
+                warehouses.forEach(w => {
+                    const o = document.createElement('option');
+                    o.value = w.id;
+                    o.textContent = `${w.name} (ID: ${w.id})`;
+                    warehouseSelect.appendChild(o);
+                });
+
+                // 前の値を復元
+                if (currentValue) {
+                    warehouseSelect.value = currentValue;
+                }
+
+                alert(`${warehouses.length}件の倉庫を読み込みました`);
+            } catch (err) {
+                alert('倉庫一覧取得に失敗: ' + err.message);
+            }
+        });
 
         // API接続テスト
         document.getElementById('btn-test-api').addEventListener('click', async () => {
@@ -302,7 +382,15 @@ window.addEventListener('DOMContentLoaded', () => {
                 if (result.success) {
                     resultDiv.style.backgroundColor = '#e8f5e9';
                     resultDiv.style.border = '1px solid #4caf50';
-                    resultDiv.innerHTML = `✅ ${result.message}<br><small>Status: ${result.status}</small>`;
+                    let successHtml = `✅ ${result.message}`;
+                    if (result.serverVersion || result.clientId || result.timestamp) {
+                        successHtml += '<br><small>';
+                        if (result.serverVersion) successHtml += `Server: ${result.serverVersion}`;
+                        if (result.clientId) successHtml += ` | Client ID: ${result.clientId}`;
+                        if (result.timestamp) successHtml += `<br>Time: ${result.timestamp}`;
+                        successHtml += '</small>';
+                    }
+                    resultDiv.innerHTML = successHtml;
                 } else {
                     resultDiv.style.backgroundColor = '#ffebee';
                     resultDiv.style.border = '1px solid #f44336';
@@ -326,6 +414,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 pollInterval: Number(document.getElementById('cfg-pollInterval').value),
                 apiHost: document.getElementById('cfg-apiHost').value,
                 apiToken: document.getElementById('cfg-apiToken').value,
+                warehouseId: document.getElementById('cfg-warehouseId').value,
                 printer0: currentCfg.printer0 || '',
                 printer1: currentCfg.printer1 || '',
                 printer2: currentCfg.printer2 || '',
@@ -423,7 +512,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 }
 
                 const result = await response.json();
-                const warehouses = result.success && result.data && result.data.data ? result.data.data : [];
+                const warehouses = result.success && result.data ? result.data : [];
 
                 const currentValue = elems.warehouseId.value;
                 elems.warehouseId.innerHTML = '<option value="">（全倉庫）</option>';
@@ -517,7 +606,15 @@ window.addEventListener('DOMContentLoaded', () => {
                 if (result.success) {
                     resultDiv.style.backgroundColor = '#e8f5e9';
                     resultDiv.style.border = '1px solid #4caf50';
-                    resultDiv.innerHTML = `✅ ${result.message}<br><small>Status: ${result.status}</small>`;
+                    let successHtml = `✅ ${result.message}`;
+                    if (result.serverVersion || result.clientId || result.timestamp) {
+                        successHtml += '<br><small>';
+                        if (result.serverVersion) successHtml += `Server: ${result.serverVersion}`;
+                        if (result.clientId) successHtml += ` | Client ID: ${result.clientId}`;
+                        if (result.timestamp) successHtml += `<br>Time: ${result.timestamp}`;
+                        successHtml += '</small>';
+                    }
+                    resultDiv.innerHTML = successHtml;
                 } else {
                     resultDiv.style.backgroundColor = '#ffebee';
                     resultDiv.style.border = '1px solid #f44336';

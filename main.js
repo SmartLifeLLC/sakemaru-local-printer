@@ -1,7 +1,7 @@
 // main.js
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -324,9 +324,10 @@ async function pollTask() {
         if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'received', data: response });
 
         // レスポンスから実際のデータを取得
-        const data = response.success && response.data && response.data.data ? response.data.data : null;
+        // v2.1: {success: true, data: [...], meta: {...}} 形式
+        const data = response.success && response.data && Array.isArray(response.data) ? response.data : null;
 
-        // 新API形式: {success: true, data: {data: [...]}} の場合
+        // 印刷ジョブがある場合
         if (data && Array.isArray(data) && data.length > 0) {
             writeLog(`${data.length}個の印刷ジョブを受信しました`, 'info');
 
@@ -458,9 +459,27 @@ function startPolling() {
         writeLog('ポーリングは既に実行中です', 'info');
         return;
     }
+
+    // 倉庫設定チェック（v2.1以降は必須）
+    if (!config.warehouseId || config.warehouseId.trim() === '') {
+        writeLog('エラー: 倉庫が設定されていません。ポーリングを開始できません', 'error');
+
+        // ダイアログを表示（メインウィンドウがある場合のみ）
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            dialog.showMessageBox(mainWindow, {
+                type: 'error',
+                title: 'ポーリング開始エラー',
+                message: '倉庫が設定されていません',
+                detail: '「⚙️ 酒まる通信設定」タブで倉庫を設定してから、再度ポーリングを開始してください。',
+                buttons: ['OK']
+            });
+        }
+        return;
+    }
+
     isPolling = true;
     console.log('Starting polling...');
-    writeLog(`ポーリング開始: ${config.apiHost} (間隔: ${config.pollInterval}ms)`, 'info');
+    writeLog(`ポーリング開始: ${config.apiHost} (間隔: ${config.pollInterval}ms, 倉庫ID: ${config.warehouseId})`, 'info');
     pollLoop();
     updateTrayMenu(); // トレイメニューを更新
 }
@@ -732,7 +751,10 @@ function checkAutoStartConditions() {
     // API設定チェック
     const hasApiHost = config.apiHost && config.apiHost.trim() !== '';
 
-    return hasPrinter && hasApiHost;
+    // 倉庫設定チェック（v2.1以降は必須）
+    const hasWarehouse = config.warehouseId && config.warehouseId.trim() !== '';
+
+    return hasPrinter && hasApiHost && hasWarehouse;
 }
 
 // メニューバー設定 & アプリ起動
@@ -810,7 +832,7 @@ app.whenReady().then(() => {
             }
         }, 1000);
     } else {
-        writeLog('プリンターまたはAPI設定が不足しています。設定を確認してください', 'error');
+        writeLog('設定が不足しています。プリンター、API、倉庫の設定を確認してください', 'error');
     }
 });
 
@@ -904,11 +926,10 @@ ipcMain.handle('download-sample-pdf', async () => {
     return downloadFromS3('vouchers/sample.pdf');
 });
 
-// API接続テスト
+// API接続テスト (v2.1: GET /api/printer/test エンドポイント使用)
 ipcMain.handle('test-api-connection', async (_e, testConfig) => {
     try {
-        const apiUrl = `https://${testConfig.apiHost}/api/printer/tasks`;
-        const ip = getLocalIp();
+        const apiUrl = `https://${testConfig.apiHost}/api/printer/test`;
         const headers = { 'Content-Type': 'application/json' };
 
         if (testConfig.apiToken) {
@@ -918,9 +939,8 @@ ipcMain.handle('test-api-connection', async (_e, testConfig) => {
         console.log('Testing API connection to:', apiUrl);
 
         const res = await fetch(apiUrl, {
-            method: 'POST',
+            method: 'GET',
             headers: headers,
-            body: JSON.stringify({ printer_pc_id: ip }),
             signal: AbortSignal.timeout(10000) // 10秒タイムアウト
         });
 
@@ -935,11 +955,17 @@ ipcMain.handle('test-api-connection', async (_e, testConfig) => {
             };
         }
 
-        // 正常なレスポンス
+        // 正常なレスポンス - サーバー情報を取得
+        const result = await res.json();
+        const serverInfo = result.success && result.data ? result.data : {};
+
         return {
             success: true,
             status: res.status,
-            message: 'API接続に成功しました'
+            message: 'API接続に成功しました',
+            serverVersion: serverInfo.server_version || 'unknown',
+            clientId: serverInfo.client_id || null,
+            timestamp: serverInfo.timestamp || null
         };
 
     } catch (err) {
