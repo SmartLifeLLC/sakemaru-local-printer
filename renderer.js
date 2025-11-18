@@ -292,7 +292,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // --- 設定タブ用処理（index.html内のタブ） ---
     if (document.getElementById('cfg-pollInterval') && document.querySelector('.tabs')) {
         // 初期ロード時に設定を読み込み
-        window.electronAPI.loadConfig().then(cfg => {
+        window.electronAPI.loadConfig().then(async cfg => {
             document.getElementById('cfg-pollInterval').value = cfg.pollInterval;
             document.getElementById('cfg-apiHost').value = cfg.apiHost;
             document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
@@ -309,6 +309,31 @@ window.addEventListener('DOMContentLoaded', () => {
             if (cfg.warehouseId && cfg.warehouseId.trim() !== '') {
                 warehouseDisplay.textContent = `ID: ${cfg.warehouseId}`;
                 warehouseDisplay.style.color = '#667eea';
+
+                // 倉庫一覧を取得して倉庫名を表示
+                if (cfg.apiHost && cfg.apiHost.trim() !== '') {
+                    try {
+                        const response = await fetch(`https://${cfg.apiHost}/api/printer/warehouses`, {
+                            method: 'GET',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${cfg.apiToken || ''}`
+                            }
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            const warehouses = result.success && result.data ? result.data : [];
+                            const warehouse = warehouses.find(w => w.id == cfg.warehouseId);
+
+                            if (warehouse) {
+                                warehouseDisplay.textContent = `ID: ${cfg.warehouseId} - ${warehouse.name}`;
+                            }
+                        }
+                    } catch (err) {
+                        console.log('倉庫情報取得失敗:', err.message);
+                    }
+                }
             } else {
                 warehouseDisplay.textContent = '全倉庫';
                 warehouseDisplay.style.color = '#999';
