@@ -8,6 +8,7 @@ const fs = require('fs');
 const fetch = global.fetch; // Node18+ のグローバル fetch
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { exec, execFile } = require('child_process');
+const crypto = require('crypto');
 const printerLib = require('pdf-to-printer'); // 追加が必要
 const AutoLaunch = require('auto-launch');
 
@@ -47,8 +48,14 @@ const autoLauncher = new AutoLaunch({
 const userDataPath = app.getPath('userData');
 const configPath = path.join(userDataPath, 'config.json');
 
+// UUID生成関数
+function generateClientId() {
+    return crypto.randomUUID();
+}
+
 // デフォルト設定
 const defaultConfig = {
+    clientId: '', // クライアント固有のUUID（初回起動時に自動生成）
     pollInterval: 5000,
     apiHost: '',
     apiToken: '',
@@ -57,6 +64,12 @@ const defaultConfig = {
     printer1: '',
     printer2: '',
     printer3: '',
+    printer4: '',
+    printer5: '',
+    printer6: '',
+    printer7: '',
+    printer8: '',
+    printer9: '',
     printMethod: 'pdf-to-printer', // 'pdf-to-printer' or 'sumatra-direct'
     sumatraPdfPath: 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe',
     s3: {
@@ -66,6 +79,9 @@ const defaultConfig = {
         secretAccessKey: ''
     }
 };
+
+// プリンタスロット数
+const MAX_PRINTERS = 10;
 
 // 設定ファイルを読み込む（存在しない場合はデフォルト設定で作成）
 let config;
@@ -79,12 +95,41 @@ if (fs.existsSync(configPath)) {
         config = JSON.parse(fs.readFileSync(devConfigPath, 'utf-8'));
         console.log('Configuration copied from development config:', devConfigPath);
     } else {
-        config = defaultConfig;
+        config = { ...defaultConfig };
         console.log('Using default configuration');
     }
     // ユーザーデータディレクトリに保存
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
     console.log('Configuration saved to:', configPath);
+}
+
+// クライアントIDが存在しない場合は自動生成
+if (!config.clientId) {
+    config.clientId = generateClientId();
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    console.log('Generated new client ID:', config.clientId);
+}
+
+// 共通APIヘッダーを構築
+function buildApiHeaders() {
+    // clientIdが未設定の場合は再生成
+    if (!config.clientId) {
+        config.clientId = generateClientId();
+        saveConfigToFile();
+        console.log('Regenerated client ID:', config.clientId);
+    }
+
+    const headers = {
+        'Content-Type': 'application/json',
+        'X-Client-Id': config.clientId
+    };
+
+    if (config.apiToken) {
+        headers['Authorization'] = `Bearer ${config.apiToken}`;
+    }
+
+    console.log('API Headers - X-Client-Id:', config.clientId);
+    return headers;
 }
 
 // 設定を保存する関数
@@ -280,12 +325,7 @@ async function downloadFilesInParallel(jobs) {
 async function pollTask() {
     try {
         const ip = getLocalIp();
-        const headers = { 'Content-Type': 'application/json' };
-
-        // Bearer認証トークンが設定されている場合は追加
-        if (config.apiToken) {
-            headers['Authorization'] = `Bearer ${config.apiToken}`;
-        }
+        const headers = buildApiHeaders();
 
         // APIエンドポイントを構築
         let apiUrl = `https://${config.apiHost}/api/printer/polling`;
@@ -349,15 +389,20 @@ async function pollTask() {
         if (data && Array.isArray(data) && data.length > 0) {
             writeLog(`${data.length}個の印刷ジョブを受信しました`, 'info');
 
-            // APIレスポンスを内部形式に変換
+            // APIレスポンスを内部形式に変換 (v2.2対応)
             const jobs = data.map(item => ({
                 file_id: item.id,
                 print_type: item.print_type,
                 file_url: item.file_path,
-                // v2.1: printer_index (0-3、未設定の場合は0)
-                printer_index: item.printer_drivers?.printer_index ?? 0,
-                warehouse_id: item.printer_drivers?.warehouse_id,
-                order: item.id // IDを順序として使用
+                // v2.2: サーバーからprinter_name, printer_indexが直接返される
+                printer_driver_id: item.printer_driver_id || null,
+                printer_name: item.printer_name || null,
+                printer_index: item.printer_index ?? item.printer_drivers?.printer_index ?? 0,
+                routing_type: item.routing_type || 'default',
+                warehouse_id: item.warehouse_id || item.printer_drivers?.warehouse_id,
+                buyer_id: item.buyer_id,
+                buyer_name: item.buyer_name,
+                order: item.order ?? item.id // order指定がなければIDを使用
             }));
 
             // order順にソート
@@ -384,32 +429,72 @@ async function pollTask() {
                     continue;
                 }
 
-                // v2.1: printer_indexを使用
-                const printerIndex = Number(job.printer_index);
-                let printerName = config[`printer${printerIndex}`];
+                // v2.2: サーバーからprinter_nameが返された場合はそれを使用
+                let printerName = null;
 
-                // 指定番号のプリンタが未設定の場合、printer0にフォールバック
-                if (!printerName && printerIndex !== 0) {
-                    printerName = config.printer0;
-                    writeLog(`プリンタ${printerIndex}が未設定、プリンタ0にフォールバック`, 'info');
+                if (job.printer_name) {
+                    // サーバー指定のプリンタ名を使用
+                    printerName = job.printer_name;
+                    writeLog(`サーバー指定プリンタ: ${printerName} (routing: ${job.routing_type})`, 'info');
+                } else {
+                    // 従来方式: printer_indexからローカル設定を参照
+                    const printerIndex = Number(job.printer_index);
+                    printerName = config[`printer${printerIndex}`];
+
+                    // 指定番号のプリンタが未設定の場合、printer0にフォールバック
+                    if (!printerName && printerIndex !== 0) {
+                        printerName = config.printer0;
+                        writeLog(`プリンタ${printerIndex}が未設定、プリンタ0にフォールバック`, 'info');
+                    }
                 }
 
                 if (printerName) {
                     writeLog(`印刷開始: ID=${job.file_id}, type=${job.print_type}, warehouse=${job.warehouse_id}, printer=${printerName}`, 'info');
-                    await printPdf(printerName, job.localPath);
-                    fs.unlinkSync(job.localPath);
 
-                    // ステータス更新APIを呼び出し
+                    let printSuccess = true;
+                    let printError = null;
+
                     try {
-                        const statusUpdateUrl = `https://${config.apiHost}/api/printer/document-${job.print_type}-status`;
-                        await fetch(statusUpdateUrl, {
+                        await printPdf(printerName, job.localPath);
+                    } catch (err) {
+                        printSuccess = false;
+                        printError = err.message;
+                        writeLog(`印刷エラー: ID=${job.file_id}, error=${err.message}`, 'error');
+                    }
+
+                    // 一時ファイル削除
+                    try {
+                        fs.unlinkSync(job.localPath);
+                    } catch (err) {
+                        console.error('Failed to delete temp file:', err);
+                    }
+
+                    // 印刷完了報告API (v2.2: POST /api/printer/jobs/{id}/complete)
+                    try {
+                        const completeUrl = `https://${config.apiHost}/api/printer/jobs/${job.file_id}/complete`;
+                        const completeBody = printSuccess
+                            ? {
+                                status: 'success',
+                                printed_at: new Date().toISOString(),
+                                printer_name: printerName
+                            }
+                            : {
+                                status: 'error',
+                                error_message: printError
+                            };
+
+                        await fetch(completeUrl, {
                             method: 'POST',
                             headers: headers,
-                            body: JSON.stringify({ id: job.file_id, status: 'END' })
+                            body: JSON.stringify(completeBody)
                         });
-                        writeLog(`ステータス更新完了: ID=${job.file_id}`, 'info');
+                        writeLog(`印刷完了報告: ID=${job.file_id}`, 'info');
                     } catch (err) {
-                        writeLog(`ステータス更新失敗: ID=${job.file_id}, error=${err.message}`, 'error');
+                        writeLog(`印刷完了報告失敗: ID=${job.file_id}, error=${err.message}`, 'error');
+                    }
+
+                    if (!printSuccess) {
+                        continue; // 次のジョブへ
                     }
 
                     if (statusWindow) {
@@ -487,26 +572,14 @@ function startPolling() {
         return;
     }
 
-    // 倉庫設定チェック（v2.1以降は必須）
-    if (!config.warehouseId || String(config.warehouseId).trim() === '') {
-        writeLog('エラー: 倉庫が設定されていません。ポーリングを開始できません', 'error');
-
-        // ダイアログを表示（メインウィンドウがある場合のみ）
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            dialog.showMessageBox(mainWindow, {
-                type: 'error',
-                title: 'ポーリング開始エラー',
-                message: '倉庫が設定されていません',
-                detail: '「⚙️ 酒まる通信設定」タブで倉庫を設定してから、再度ポーリングを開始してください。',
-                buttons: ['OK']
-            });
-        }
-        return;
-    }
-
     isPolling = true;
     console.log('Starting polling...');
-    writeLog(`ポーリング開始: ${config.apiHost} (間隔: ${config.pollInterval}ms, 倉庫ID: ${config.warehouseId})`, 'info');
+
+    // 倉庫IDがある場合は表示、なければクライアントIDで識別
+    const identifyBy = config.warehouseId
+        ? `倉庫ID: ${config.warehouseId}`
+        : `クライアントID: ${config.clientId?.substring(0, 8)}...`;
+    writeLog(`ポーリング開始: ${config.apiHost} (間隔: ${config.pollInterval}ms, ${identifyBy})`, 'info');
     pollLoop();
     updateTrayMenu(); // トレイメニューを更新
 }
@@ -751,7 +824,7 @@ async function validatePrinterConfiguration() {
 
         // config.jsonに設定されているプリンタが実際に存在するか確認
         let hasValidPrinter = false;
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < MAX_PRINTERS; i++) {
             const configuredPrinter = config[`printer${i}`];
             if (configuredPrinter) {
                 if (printerNames.includes(configuredPrinter)) {
@@ -773,15 +846,21 @@ async function validatePrinterConfiguration() {
 // 起動時の設定チェック関数
 function checkAutoStartConditions() {
     // プリンター設定チェック（少なくとも1つのプリンターが設定されているか）
-    const hasPrinter = config.printer0 || config.printer1 || config.printer2 || config.printer3;
+    let hasPrinter = false;
+    for (let i = 0; i < MAX_PRINTERS; i++) {
+        if (config[`printer${i}`]) {
+            hasPrinter = true;
+            break;
+        }
+    }
 
     // API設定チェック
     const hasApiHost = config.apiHost && config.apiHost.trim() !== '';
 
-    // 倉庫設定チェック（v2.1以降は必須）
-    const hasWarehouse = config.warehouseId && String(config.warehouseId).trim() !== '';
+    // クライアントIDチェック（倉庫未設定時はクライアントIDで識別）
+    const hasClientId = config.clientId && config.clientId.trim() !== '';
 
-    return hasPrinter && hasApiHost && hasWarehouse;
+    return hasPrinter && hasApiHost && hasClientId;
 }
 
 // メニューバー設定 & アプリ起動
@@ -859,7 +938,7 @@ app.whenReady().then(() => {
             }
         }, 1000);
     } else {
-        writeLog('設定が不足しています。プリンター、API、倉庫の設定を確認してください', 'error');
+        writeLog('設定が不足しています。プリンター、APIの設定を確認してください', 'error');
     }
 });
 
@@ -920,8 +999,10 @@ ipcMain.handle('load-config', async () => JSON.parse(fs.readFileSync(configPath,
 ipcMain.handle('save-config', async (_e, newCfg) => {
     writeLog('設定を保存しています...', 'info');
 
-    // 設定を更新
+    // 設定を更新（clientIdは保持）
+    const clientId = config.clientId;
     config = newCfg;
+    config.clientId = clientId;
 
     // ファイルに保存
     if (!saveConfigToFile()) {
@@ -951,15 +1032,93 @@ ipcMain.handle('download-sample-pdf', async () => {
     return downloadFromS3('vouchers/sample.pdf');
 });
 
+// プリンタリスト同期 (v2.2: POST /api/printer/warehouses/{id}/printers/sync)
+ipcMain.handle('sync-printers', async (_e, { warehouseId, printers }) => {
+    try {
+        if (!config.apiHost) {
+            return { success: false, error: 'APIホストが設定されていません' };
+        }
+
+        if (!warehouseId) {
+            return { success: false, error: '倉庫IDが指定されていません' };
+        }
+
+        const apiUrl = `https://${config.apiHost}/api/printer/warehouses/${warehouseId}/printers/sync`;
+        const headers = buildApiHeaders();
+
+        console.log('Syncing printers to:', apiUrl);
+        console.log('Printers:', JSON.stringify(printers));
+
+        const requestBody = {
+            client_uuid: config.clientId,
+            printers: printers
+        };
+        console.log('Sync request body:', JSON.stringify(requestBody));
+
+        const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(15000) // 15秒タイムアウト
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            writeLog(`プリンタ同期エラー: HTTP ${res.status}`, 'error');
+            return {
+                success: false,
+                status: res.status,
+                error: `HTTP ${res.status}: ${res.statusText}`,
+                details: errorText.substring(0, 500)
+            };
+        }
+
+        const result = await res.json();
+
+        if (result.success) {
+            writeLog(`プリンタ同期完了: ${result.data?.synced_count || 0}台`, 'success');
+        }
+
+        return result;
+
+    } catch (err) {
+        console.error('Printer sync error:', err);
+        writeLog(`プリンタ同期エラー: ${err.message}`, 'error');
+
+        let errorMessage = err.message;
+        if (err.name === 'AbortError' || err.message.includes('timeout')) {
+            errorMessage = '接続タイムアウト: サーバーに接続できません';
+        }
+
+        return {
+            success: false,
+            error: errorMessage,
+            details: err.stack
+        };
+    }
+});
+
 // API接続テスト (v2.1: GET /api/printer/test エンドポイント使用)
 ipcMain.handle('test-api-connection', async (_e, testConfig) => {
     try {
+        // clientIdが未設定の場合は再生成
+        if (!config.clientId) {
+            config.clientId = generateClientId();
+            saveConfigToFile();
+            console.log('Regenerated client ID for test:', config.clientId);
+        }
+
         const apiUrl = `https://${testConfig.apiHost}/api/printer/test`;
-        const headers = { 'Content-Type': 'application/json' };
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Client-Id': config.clientId
+        };
 
         if (testConfig.apiToken) {
             headers['Authorization'] = `Bearer ${testConfig.apiToken}`;
         }
+
+        console.log('Test API - X-Client-Id:', config.clientId);
 
         console.log('Testing API connection to:', apiUrl);
 

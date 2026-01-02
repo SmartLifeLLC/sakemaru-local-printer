@@ -48,13 +48,6 @@ window.addEventListener('DOMContentLoaded', () => {
                 // 設定を読み込んで検証
                 const cfg = await window.electronAPI.loadConfig();
 
-                // 倉庫設定チェック
-                if (!cfg.warehouseId || String(cfg.warehouseId).trim() === '') {
-                    addLogLine('エラー: 倉庫が設定されていません', 'error');
-                    alert('❌ エラー: 倉庫が設定されていません\n\n「⚙️ 酒まる通信設定」タブで倉庫を設定してください。');
-                    return;
-                }
-
                 // API接続テスト
                 addLogLine('API接続をテスト中...', 'info');
                 const testResult = await window.electronAPI.testApiConnection({
@@ -152,41 +145,97 @@ window.addEventListener('DOMContentLoaded', () => {
         addLogLine('アプリケーション起動', 'info');
     }
 
-    // --- プリンタ設定タブ用処理（旧ホームタブ） ---
+    // --- プリンタ設定タブ用処理 ---
     if (document.getElementById('btn-load')) {
-        const printerSelects = [
-            document.getElementById('printer0'),
-            document.getElementById('printer1'),
-            document.getElementById('printer2'),
-            document.getElementById('printer3'),
-            document.getElementById('test-printer')
-        ];
+        const MAX_PRINTERS = 10;
+        let availablePrinters = []; // システムから取得したプリンタ一覧
+
+        // プリンタスロットを動的に生成
+        function createPrinterSlots() {
+            const grid = document.getElementById('printer-grid');
+            if (!grid) return;
+
+            grid.innerHTML = '';
+            for (let i = 0; i < MAX_PRINTERS; i++) {
+                const slot = document.createElement('div');
+                slot.className = 'printer-slot';
+                slot.innerHTML = `
+                    <span class="printer-number">${i}</span>
+                    <select id="printer${i}">
+                        <option value="">（未設定）</option>
+                    </select>
+                `;
+                grid.appendChild(slot);
+            }
+
+            // 各selectに変更イベントを追加して重複チェック
+            for (let i = 0; i < MAX_PRINTERS; i++) {
+                const select = document.getElementById(`printer${i}`);
+                if (select) {
+                    select.addEventListener('change', checkDuplicatePrinters);
+                }
+            }
+        }
+
+        // 重複プリンタをチェック
+        function checkDuplicatePrinters() {
+            const selectedPrinters = [];
+            const duplicates = new Set();
+
+            for (let i = 0; i < MAX_PRINTERS; i++) {
+                const select = document.getElementById(`printer${i}`);
+                if (select && select.value) {
+                    if (selectedPrinters.includes(select.value)) {
+                        duplicates.add(select.value);
+                    } else {
+                        selectedPrinters.push(select.value);
+                    }
+                }
+            }
+
+            // 警告表示
+            const warning = document.getElementById('printer-duplicate-warning');
+            if (warning) {
+                warning.style.display = duplicates.size > 0 ? 'block' : 'none';
+            }
+
+            // 重複しているselectをハイライト
+            for (let i = 0; i < MAX_PRINTERS; i++) {
+                const select = document.getElementById(`printer${i}`);
+                if (select) {
+                    if (select.value && duplicates.has(select.value)) {
+                        select.style.borderColor = '#dc3545';
+                    } else {
+                        select.style.borderColor = '#ddd';
+                    }
+                }
+            }
+
+            return duplicates.size === 0;
+        }
 
         // プリンタ一覧を読み込んで設定を反映する関数
         async function loadPrintersAndApplyConfig(showAlert = false) {
             try {
+                // プリンタスロットを動的に生成
+                createPrinterSlots();
+
                 // 保存済みの設定を取得
                 const cfg = await window.electronAPI.loadConfig();
-                const savedPrinters = {
-                    printer0: cfg.printer0 || '',
-                    printer1: cfg.printer1 || '',
-                    printer2: cfg.printer2 || '',
-                    printer3: cfg.printer3 || ''
-                };
 
                 // プリンタ一覧を取得
                 console.log('Calling getPrinters...');
                 const ps = await window.electronAPI.getPrinters();
                 console.log('Got printers:', ps);
+                availablePrinters = ps;
 
-                // すべてのselectに反映
                 const printerNames = ps.map(p => p.name);
 
-                printerSelects.forEach((sel, index) => {
-                    if (!sel) {
-                        console.warn(`Select element at index ${index} is null`);
-                        return;
-                    }
+                // プリンタスロット用のselectを更新
+                for (let i = 0; i < MAX_PRINTERS; i++) {
+                    const sel = document.getElementById(`printer${i}`);
+                    if (!sel) continue;
+
                     sel.innerHTML = '<option value="">（未設定）</option>';
 
                     // システムから取得したプリンタをオプションに追加
@@ -197,30 +246,42 @@ window.addEventListener('DOMContentLoaded', () => {
                         sel.appendChild(o);
                     });
 
-                    // printer0~3のみ保存設定を反映（test-printerは除外）
-                    if (index < 4) {
-                        const savedValue = savedPrinters[`printer${index}`];
+                    const savedValue = cfg[`printer${i}`] || '';
 
-                        // 保存済みの設定がシステムに存在しない場合、オプションとして追加（警告付き）
-                        if (savedValue && !printerNames.includes(savedValue)) {
-                            const o = document.createElement('option');
-                            o.value = savedValue;
-                            o.textContent = `${savedValue} ⚠️ (システムに見つかりません)`;
-                            o.style.color = '#d32f2f';
-                            sel.appendChild(o);
-                            console.warn(`Saved printer "${savedValue}" not found in system`);
-                        }
-
-                        // 保存済みの設定を反映
-                        if (savedValue) {
-                            sel.value = savedValue;
-                            console.log(`Set printer${index} to: ${savedValue}`);
-                        }
+                    // 保存済みの設定がシステムに存在しない場合、オプションとして追加（警告付き）
+                    if (savedValue && !printerNames.includes(savedValue)) {
+                        const o = document.createElement('option');
+                        o.value = savedValue;
+                        o.textContent = `${savedValue} ⚠️ (システムに見つかりません)`;
+                        o.style.color = '#d32f2f';
+                        sel.appendChild(o);
+                        console.warn(`Saved printer "${savedValue}" not found in system`);
                     }
-                });
+
+                    // 保存済みの設定を反映
+                    if (savedValue) {
+                        sel.value = savedValue;
+                        console.log(`Set printer${i} to: ${savedValue}`);
+                    }
+                }
+
+                // テスト印刷用のselectも更新
+                const testPrinterSelect = document.getElementById('test-printer');
+                if (testPrinterSelect) {
+                    testPrinterSelect.innerHTML = '<option value="">（プリンタを選択）</option>';
+                    ps.forEach(p => {
+                        const o = document.createElement('option');
+                        o.value = p.name;
+                        o.textContent = p.name + (p.isDefault ? ' (Default)' : '');
+                        testPrinterSelect.appendChild(o);
+                    });
+                }
+
+                // 重複チェック
+                checkDuplicatePrinters();
 
                 if (showAlert) {
-                    alert('プリンタ一覧を読み込みました');
+                    alert(`プリンタ一覧を読み込みました（${ps.length}台）`);
                 }
             } catch (err) {
                 console.error('プリンタ一覧取得エラー:', err);
@@ -241,17 +302,56 @@ window.addEventListener('DOMContentLoaded', () => {
             await loadPrintersAndApplyConfig(true);
         });
 
-        // プリンタ設定を保存
+        // プリンタ設定を保存 & サーバーに同期
         document.getElementById('btn-save-printers').addEventListener('click', async () => {
+            // 重複チェック
+            if (!checkDuplicatePrinters()) {
+                alert('⚠️ 同じプリンタが複数選択されています。\n重複を解除してから保存してください。');
+                return;
+            }
+
             try {
                 const cfg = await window.electronAPI.loadConfig();
-                cfg.printer0 = document.getElementById('printer0').value;
-                cfg.printer1 = document.getElementById('printer1').value;
-                cfg.printer2 = document.getElementById('printer2').value;
-                cfg.printer3 = document.getElementById('printer3').value;
 
+                // 10個のプリンタ設定を保存
+                for (let i = 0; i < MAX_PRINTERS; i++) {
+                    const select = document.getElementById(`printer${i}`);
+                    cfg[`printer${i}`] = select ? select.value : '';
+                }
+
+                // ローカルに保存
                 await window.electronAPI.saveConfig(cfg);
-                alert('プリンタ設定を保存しました');
+
+                // 倉庫IDが設定されている場合、サーバーに同期
+                if (cfg.warehouseId && String(cfg.warehouseId).trim() !== '') {
+                    // 重複を除去してユニークなプリンタのみ送信
+                    const uniquePrinters = new Map();
+                    for (let i = 0; i < MAX_PRINTERS; i++) {
+                        const printerName = cfg[`printer${i}`];
+                        if (printerName && !uniquePrinters.has(printerName)) {
+                            uniquePrinters.set(printerName, {
+                                printer_index: i,
+                                name: printerName,
+                                is_default: uniquePrinters.size === 0 // 最初のプリンタをデフォルトに
+                            });
+                        }
+                    }
+
+                    const printers = Array.from(uniquePrinters.values());
+
+                    if (printers.length > 0) {
+                        const syncResult = await window.electronAPI.syncPrinters(cfg.warehouseId, printers);
+                        if (syncResult.success) {
+                            alert(`プリンタ設定を保存し、サーバーに同期しました（${printers.length}台）`);
+                        } else {
+                            alert(`プリンタ設定を保存しました\n\n⚠️ サーバー同期失敗: ${syncResult.error || '不明なエラー'}`);
+                        }
+                    } else {
+                        alert('プリンタ設定を保存しました（プリンタ未設定のため同期スキップ）');
+                    }
+                } else {
+                    alert('プリンタ設定を保存しました\n\n※ 倉庫が設定されていないため、サーバー同期はスキップされました');
+                }
             } catch (e) {
                 alert('保存に失敗: ' + e.message);
             }
@@ -296,6 +396,7 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-pollInterval').value = cfg.pollInterval;
             document.getElementById('cfg-apiHost').value = cfg.apiHost;
             document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
+            document.getElementById('cfg-clientId').value = cfg.clientId || '';
             document.getElementById('cfg-warehouseId').value = cfg.warehouseId || '';
             document.getElementById('cfg-s3-bucket').value = cfg.s3.bucket;
             document.getElementById('cfg-s3-region').value = cfg.s3.region;
@@ -327,7 +428,7 @@ window.addEventListener('DOMContentLoaded', () => {
                             const warehouse = warehouses.find(w => w.id == cfg.warehouseId);
 
                             if (warehouse) {
-                                warehouseDisplay.textContent = `ID: ${cfg.warehouseId} - ${warehouse.name}`;
+                                warehouseDisplay.textContent = `${warehouse.name} (ID: ${cfg.warehouseId})`;
                             }
                         }
                     } catch (err) {
@@ -335,7 +436,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             } else {
-                warehouseDisplay.textContent = '全倉庫';
+                warehouseDisplay.textContent = 'クライアントIDで識別';
                 warehouseDisplay.style.color = '#999';
             }
         }).catch(() => alert('設定読み込み失敗'));
@@ -346,8 +447,8 @@ window.addEventListener('DOMContentLoaded', () => {
             const selectedOption = e.target.selectedOptions[0];
 
             if (e.target.value === '') {
-                // 全倉庫を選択した場合
-                warehouseDisplay.textContent = '全倉庫';
+                // クライアントIDで識別
+                warehouseDisplay.textContent = 'クライアントIDで識別';
                 warehouseDisplay.style.color = '#999';
             } else {
                 // 特定の倉庫を選択した場合
@@ -384,7 +485,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 const warehouseSelect = document.getElementById('cfg-warehouseId');
                 const currentValue = warehouseSelect.value;
-                warehouseSelect.innerHTML = '<option value="">（全倉庫）</option>';
+                warehouseSelect.innerHTML = '<option value="">（クライアントID で識別）</option>';
 
                 warehouses.forEach(w => {
                     const o = document.createElement('option');
@@ -477,6 +578,12 @@ window.addEventListener('DOMContentLoaded', () => {
                 printer1: currentCfg.printer1 || '',
                 printer2: currentCfg.printer2 || '',
                 printer3: currentCfg.printer3 || '',
+                printer4: currentCfg.printer4 || '',
+                printer5: currentCfg.printer5 || '',
+                printer6: currentCfg.printer6 || '',
+                printer7: currentCfg.printer7 || '',
+                printer8: currentCfg.printer8 || '',
+                printer9: currentCfg.printer9 || '',
                 printMethod: document.getElementById('cfg-printMethod').value,
                 sumatraPdfPath: document.getElementById('cfg-sumatraPdfPath').value,
                 s3: {
@@ -573,7 +680,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 const warehouses = result.success && result.data ? result.data : [];
 
                 const currentValue = elems.warehouseId.value;
-                elems.warehouseId.innerHTML = '<option value="">（全倉庫）</option>';
+                elems.warehouseId.innerHTML = '<option value="">（クライアントID で識別）</option>';
 
                 warehouses.forEach(w => {
                     const o = document.createElement('option');

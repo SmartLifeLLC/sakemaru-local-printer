@@ -26,6 +26,37 @@
             gap: 10px;
             margin: 10px 0;
         }
+        #printer-grid {
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+        }
+        .printer-slot {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 0 4px;
+            margin: 0;
+            background: transparent;
+        }
+        .printer-slot .printer-number {
+            padding: 1px 5px;
+            font-size: 10px;
+            margin: 0;
+            min-width: 18px;
+            text-align: center;
+            background: #e0e0e0;
+            color: #666;
+            font-weight: 600;
+            border-radius: 3px;
+        }
+        .printer-slot select {
+            flex: 1;
+            margin: 0 !important;
+            padding: 2px 4px !important;
+            font-size: 12px;
+            border-width: 1px;
+            border-radius: 0;
+        }
         h1 {
             color: #667eea;
             font-size: 28px;
@@ -190,6 +221,35 @@
             font-weight: 700;
             color: #667eea;
         }
+        .settings-box {
+            border: 1px solid #ddd;
+            border-radius: 0;
+            padding: 6px 10px;
+            margin: 0;
+            border-bottom: none;
+        }
+        .settings-box:first-child {
+            border-radius: 6px 6px 0 0;
+        }
+        .settings-box:last-of-type {
+            border-radius: 0 0 6px 6px;
+            border-bottom: 1px solid #ddd;
+        }
+        .settings-box .printer-grid {
+            margin: 0;
+            gap: 4px;
+        }
+        .settings-box label {
+            margin-top: 0;
+            margin-bottom: 1px;
+            font-size: 12px;
+        }
+        .settings-box input,
+        .settings-box select {
+            padding: 4px 6px;
+            margin: 0;
+            font-size: 13px;
+        }
         .log-box {
             background: #1e1e1e;
             color: #f8f9fa;
@@ -253,39 +313,19 @@
     <div id="tab-printers" class="tab-content">
         <div class="section">
             <h2>プリンタ設定</h2>
+            <p style="color: #666; font-size: 13px; margin: 0 0 10px 0;">
+                ※ プリンタ設定を保存すると、選択した倉庫のサーバーに自動同期されます
+            </p>
             <div class="button-row">
                 <button id="btn-load" class="btn-secondary">📋 プリンタ一覧を読み込み</button>
-                <button id="btn-save-printers" class="btn-secondary">💾 プリンタ設定を保存</button>
+                <button id="btn-save-printers" class="btn-secondary">💾 保存 & サーバー同期</button>
             </div>
 
-            <div class="printer-grid">
-                <div class="printer-slot">
-                    <span class="printer-number">プリンタ 0</span>
-                    <select id="printer0">
-                        <option value="">（未設定）</option>
-                    </select>
-                </div>
-
-                <div class="printer-slot">
-                    <span class="printer-number">プリンタ 1</span>
-                    <select id="printer1">
-                        <option value="">（未設定）</option>
-                    </select>
-                </div>
-
-                <div class="printer-slot">
-                    <span class="printer-number">プリンタ 2</span>
-                    <select id="printer2">
-                        <option value="">（未設定）</option>
-                    </select>
-                </div>
-
-                <div class="printer-slot">
-                    <span class="printer-number">プリンタ 3</span>
-                    <select id="printer3">
-                        <option value="">（未設定）</option>
-                    </select>
-                </div>
+            <div class="printer-grid" id="printer-grid">
+                <!-- プリンタスロットはrenderer.jsで動的に生成 -->
+            </div>
+            <div id="printer-duplicate-warning" style="display: none; color: #dc3545; font-size: 13px; margin-top: 5px;">
+                ⚠️ 同じプリンタが複数選択されています
             </div>
         </div>
 
@@ -300,75 +340,77 @@
     </div>
 
     <div id="tab-settings" class="tab-content">
-        <div class="section">
-            <h2>API設定</h2>
-            <label>ポーリング間隔 (ms):</label>
-            <input type="number" id="cfg-pollInterval" />
-
-            <label>API ホスト:</label>
-            <input type="text" id="cfg-apiHost" placeholder="tani-hub.sakemaru.click" />
-
-            <label>API認証トークン (Bearer):</label>
-            <input type="password" id="cfg-apiToken" placeholder="認証トークンを入力してください" />
-
-            <label>倉庫 <small>(オプション、未設定の場合は全倉庫のジョブを取得)</small>:</label>
-
-            <div class="status-box" style="margin-bottom: 10px;">
-                <div class="status-item">
-                    <span class="status-label">現在の倉庫設定:</span>
-                    <span id="current-warehouse-display" class="status-value">読み込み中...</span>
-                </div>
-            </div>
-
-            <div style="display: flex; gap: 10px; align-items: flex-start;">
-                <select id="cfg-warehouseId" style="flex: 1;">
-                    <option value="">（全倉庫）</option>
-                </select>
-                <button id="btn-load-warehouses" type="button" style="width: auto; margin: 0;">倉庫一覧を読み込み</button>
-            </div>
-
-            <button id="btn-test-api" type="button" style="margin-top:8px;">API接続テスト</button>
-            <div id="api-test-result" style="margin-top:8px; padding:8px; display:none; border-radius:8px;"></div>
-        </div>
-
-        <div class="section">
-            <h2>S3設定</h2>
+        <div class="settings-box">
             <div class="printer-grid">
                 <div>
-                    <label>Bucket:</label>
+                    <label>API ホスト:</label>
+                    <input type="text" id="cfg-apiHost" placeholder="tani-hub.sakemaru.click" />
+                </div>
+                <div>
+                    <label>ポーリング間隔 (ms):</label>
+                    <input type="number" id="cfg-pollInterval" />
+                </div>
+                <div>
+                    <label>API認証トークン (Bearer):</label>
+                    <input type="password" id="cfg-apiToken" placeholder="認証トークンを入力してください" />
+                </div>
+                <div>
+                    <label>クライアントID:</label>
+                    <input type="text" id="cfg-clientId" readonly style="background: #f0f0f0; color: #666;" />
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px;">
+                <span style="font-size: 12px; font-weight: 600; color: #555; white-space: nowrap;">倉庫:</span>
+                <span id="current-warehouse-display" style="font-size: 12px; font-weight: 700; color: #667eea; min-width: 120px;">読み込み中...</span>
+                <select id="cfg-warehouseId" style="flex: 1; margin: 0; padding: 4px 6px; font-size: 13px;">
+                    <option value="">（クライアントID で識別）</option>
+                </select>
+                <button id="btn-load-warehouses" type="button" style="width: auto; margin: 0; padding: 4px 8px; font-size: 12px; white-space: nowrap;">倉庫読み込み</button>
+            </div>
+        </div>
+
+        <div class="settings-box">
+            <div class="printer-grid">
+                <div>
+                    <label>S3 Bucket:</label>
                     <input type="text" id="cfg-s3-bucket" />
                 </div>
-
                 <div>
-                    <label>Region:</label>
+                    <label>S3 Region:</label>
                     <input type="text" id="cfg-s3-region" />
                 </div>
-
                 <div>
-                    <label>AccessKeyId:</label>
+                    <label>S3 AccessKeyId:</label>
                     <input type="text" id="cfg-s3-accessKeyId" />
                 </div>
-
                 <div>
-                    <label>SecretAccessKey:</label>
+                    <label>S3 SecretAccessKey:</label>
                     <input type="password" id="cfg-s3-secretAccessKey" />
                 </div>
             </div>
         </div>
 
-        <div class="section">
-            <h2>印刷設定</h2>
-            <label>印刷方式:</label>
-            <select id="cfg-printMethod">
-                <option value="pdf-to-printer">pdf-to-printer (デフォルト)</option>
-                <option value="sumatra-direct">SumatraPDF 直接呼び出し</option>
-            </select>
-
-            <label>SumatraPDF パス <small>(sumatra-direct選択時のみ使用)</small>:</label>
-            <input type="text" id="cfg-sumatraPdfPath" placeholder="C:\Program Files\SumatraPDF\SumatraPDF.exe" />
+        <div class="settings-box">
+            <div class="printer-grid">
+                <div>
+                    <label>印刷方式:</label>
+                    <select id="cfg-printMethod">
+                        <option value="pdf-to-printer">pdf-to-printer (デフォルト)</option>
+                        <option value="sumatra-direct">SumatraPDF 直接呼び出し</option>
+                    </select>
+                </div>
+                <div>
+                    <label>SumatraPDF パス <small>(sumatra-direct選択時)</small>:</label>
+                    <input type="text" id="cfg-sumatraPdfPath" placeholder="C:\Program Files\SumatraPDF\SumatraPDF.exe" />
+                </div>
+            </div>
         </div>
 
-        <button id="btn-save-config" class="btn-secondary">💾 設定を保存</button>
+        <div class="button-row" style="margin-top: 8px;">
+            <button id="btn-test-api" type="button" style="padding: 6px 12px; font-size: 13px;">🔗 API接続テスト</button>
+            <button id="btn-save-config" class="btn-secondary" style="padding: 6px 12px; font-size: 13px;">💾 設定を保存</button>
+        </div>
+        <div id="api-test-result" style="margin-top:6px; padding:6px 8px; display:none; border-radius:6px; font-size: 12px;"></div>
     </div>
 </div>
 

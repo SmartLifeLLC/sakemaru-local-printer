@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveConfig:       (cfg) => ipcRenderer.invoke('save-config', cfg),
     testApiConnection: (cfg) => ipcRenderer.invoke('test-api-connection', cfg),
 
+    // プリンタ同期 (v2.2)
+    syncPrinters:     (warehouseId, printers) => ipcRenderer.invoke('sync-printers', { warehouseId, printers }),
+
     // ステータスウィンドウ向け：ポーリング状況を受け取る
     onPollStatus:     (callback) => ipcRenderer.on('poll-status', (_e, data) => callback(data)),
 });
