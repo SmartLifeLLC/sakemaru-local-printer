@@ -339,7 +339,8 @@ async function pollTask() {
 
         const res = await fetch(apiUrl, {
             method: 'GET',
-            headers: headers
+            headers: headers,
+            signal: AbortSignal.timeout(15000)
         });
 
         console.log('API Response Status:', res.status, res.statusText);
@@ -475,11 +476,13 @@ async function pollTask() {
                         const completeBody = printSuccess
                             ? {
                                 status: 'success',
+                                print_type: job.print_type,
                                 printed_at: new Date().toISOString(),
                                 printer_name: printerName
                             }
                             : {
                                 status: 'error',
+                                print_type: job.print_type,
                                 error_message: printError
                             };
 
