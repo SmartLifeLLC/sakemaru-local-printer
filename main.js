@@ -47,7 +47,45 @@ const autoLauncher = new AutoLaunch({
 
 // 設定ファイルパス（ユーザーデータディレクトリに配置）
 const userDataPath = app.getPath('userData');
-const configPath = path.join(userDataPath, 'config.json');
+
+// プロファイル管理: 本番(prod) / ステージング(stg) の2固定
+// テンプレート(変更不可): プロジェクトルートの config-prod.json / config-stg.json
+// ユーザー編集可: userData/config-prod.json / userData/config-stg.json
+// 現在のアクティブプロファイル: userData/active.json
+const VALID_PROFILES = ['prod', 'stg'];
+const activeFilePath = path.join(userDataPath, 'active.json');
+
+function getUserConfigPath(profile) {
+    return path.join(userDataPath, `config-${profile}.json`);
+}
+function getTemplateConfigPath(profile) {
+    return path.join(__dirname, `config-${profile}.json`);
+}
+
+function loadActiveProfile() {
+    try {
+        if (fs.existsSync(activeFilePath)) {
+            const obj = JSON.parse(fs.readFileSync(activeFilePath, 'utf-8'));
+            if (obj && VALID_PROFILES.includes(obj.profile)) return obj.profile;
+        }
+    } catch (e) {
+        console.error('Failed to read active.json:', e);
+    }
+    return 'prod';
+}
+
+function saveActiveProfile(profile) {
+    try {
+        fs.writeFileSync(activeFilePath, JSON.stringify({ profile }, null, 2), 'utf-8');
+        return true;
+    } catch (e) {
+        console.error('Failed to write active.json:', e);
+        return false;
+    }
+}
+
+let activeProfile = loadActiveProfile();
+let configPath = getUserConfigPath(activeProfile);
 
 // UUID生成関数
 function generateClientId() {
@@ -85,32 +123,38 @@ const defaultConfig = {
 // プリンタスロット数
 const MAX_PRINTERS = 10;
 
-// 設定ファイルを読み込む（存在しない場合はデフォルト設定で作成）
-let config;
-if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    console.log('Configuration loaded from:', configPath);
-} else {
-    // 開発時用: プロジェクトルートのconfig.jsonをコピー
-    const devConfigPath = path.join(__dirname, 'config.json');
-    if (fs.existsSync(devConfigPath)) {
-        config = JSON.parse(fs.readFileSync(devConfigPath, 'utf-8'));
-        console.log('Configuration copied from development config:', devConfigPath);
+// 指定プロファイルの設定をロードする（無ければテンプレートからコピー、なお無ければデフォルト）
+function loadConfigForProfile(profile) {
+    const userPath = getUserConfigPath(profile);
+    const tmplPath = getTemplateConfigPath(profile);
+    let cfg;
+
+    if (fs.existsSync(userPath)) {
+        cfg = JSON.parse(fs.readFileSync(userPath, 'utf-8'));
+        console.log(`Configuration loaded from user file (${profile}):`, userPath);
+    } else if (fs.existsSync(tmplPath)) {
+        // テンプレートをコピー（テンプレ自体は変更不可、これは初回の種だけ）
+        cfg = JSON.parse(fs.readFileSync(tmplPath, 'utf-8'));
+        console.log(`Configuration seeded from template (${profile}):`, tmplPath);
+        fs.writeFileSync(userPath, JSON.stringify(cfg, null, 2), 'utf-8');
+        console.log(`Saved initial config (${profile}) to:`, userPath);
     } else {
-        config = { ...defaultConfig };
-        console.log('Using default configuration');
+        cfg = { ...defaultConfig };
+        console.log(`Using default configuration (no template found for ${profile})`);
+        fs.writeFileSync(userPath, JSON.stringify(cfg, null, 2), 'utf-8');
     }
-    // ユーザーデータディレクトリに保存
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-    console.log('Configuration saved to:', configPath);
+
+    // clientId が無ければ生成して書き戻し（プロファイルごとに独立した clientId）
+    if (!cfg.clientId) {
+        cfg.clientId = generateClientId();
+        fs.writeFileSync(userPath, JSON.stringify(cfg, null, 2), 'utf-8');
+        console.log(`Generated new client ID for ${profile}:`, cfg.clientId);
+    }
+
+    return cfg;
 }
 
-// クライアントIDが存在しない場合は自動生成
-if (!config.clientId) {
-    config.clientId = generateClientId();
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-    console.log('Generated new client ID:', config.clientId);
-}
+let config = loadConfigForProfile(activeProfile);
 
 // 共通APIヘッダーを構築
 function buildApiHeaders() {
@@ -206,9 +250,10 @@ function getPrinterSettingsByIndex(printerIndex) {
     const settings = (config.printerSettings && config.printerSettings[key]) || {};
     return {
         orientation: settings.orientation || 'auto', // 'auto' | 'portrait' | 'landscape'
-        paperSize: settings.paperSize || 'auto',     // 'auto' | 'A4' | 'A5' | 'B5' | 'Letter'
+        paperSize: settings.paperSize || 'auto',     // 'auto' | 'A4' | 'A5' | 'B5' | 'Letter' | 'Custom191x131' | 'Custom131x191'
         offsetX: Number(settings.offsetX) || 0,      // mm
         offsetY: Number(settings.offsetY) || 0,      // mm
+        noScale: !!settings.noScale,                 // true: 原寸印刷（縮小しない）、上端揃え
     };
 }
 
@@ -218,14 +263,19 @@ const PAPER_SIZES_PT = {
     A5:     { width: 419.53, height: 595.28 },
     B5:     { width: 498.90, height: 708.66 },
     Letter: { width: 612.00, height: 792.00 },
+    // カスタム: 191mm × 131mm（幅×高さ、横長基準）
+    'Custom191x131': { width: 191 * 2.834645669, height: 131 * 2.834645669 },
+    // カスタム: 131mm × 191mm（幅×高さ、縦長基準）
+    'Custom131x191': { width: 131 * 2.834645669, height: 191 * 2.834645669 },
 };
 
-// 設定がすべてデフォルト（auto / 0）かどうか
+// 設定がすべてデフォルト（auto / 0 / false）かどうか
 function isDefaultSettings(s) {
     return s.orientation === 'auto'
         && s.paperSize === 'auto'
         && (!s.offsetX || s.offsetX === 0)
-        && (!s.offsetY || s.offsetY === 0);
+        && (!s.offsetY || s.offsetY === 0)
+        && !s.noScale;
 }
 
 // pdf-libでPDFに印刷設定を適用して新しい一時PDFを生成
@@ -269,14 +319,21 @@ async function applyPrintSettingsToPdf(localFilePath, settings) {
         const newPage = outDoc.addPage([targetW, targetH]);
         const embedded = await outDoc.embedPage(srcPage);
 
-        // フィット率（用紙に収まるよう縮小、拡大はしない）
-        const scale = Math.min(targetW / srcW, targetH / srcH, 1);
+        // 縮小ポリシー: noScale=true なら原寸維持。それ以外は用紙に収まるよう縮小（拡大はしない）
+        const scale = settings.noScale
+            ? 1
+            : Math.min(targetW / srcW, targetH / srcH, 1);
         const drawnW = srcW * scale;
         const drawnH = srcH * scale;
 
-        // 中央配置 + ユーザー指定オフセット（offsetY は上方向を正とする）
+        // 配置: 左右は中央、Y は noScale なら上端揃え、それ以外は中央
+        // PDF座標系は左下原点。
+        // offsetX: 正なら右へ移動
+        // offsetY: 通常モードは「正で上へ」、noScale モードは「正で下へ」（用紙の上端からの下げ量として直感的）
         const x = (targetW - drawnW) / 2 + offsetXPt;
-        const y = (targetH - drawnH) / 2 + offsetYPt;
+        const y = settings.noScale
+            ? (targetH - drawnH) - offsetYPt
+            : (targetH - drawnH) / 2 + offsetYPt;
 
         newPage.drawPage(embedded, {
             x,
@@ -307,11 +364,12 @@ async function printPdf(printerName, localFilePath, printerIndex = null, overrid
             paperSize: overrideSettings.paperSize || 'auto',
             offsetX: Number(overrideSettings.offsetX) || 0,
             offsetY: Number(overrideSettings.offsetY) || 0,
+            noScale: !!overrideSettings.noScale,
         };
     } else if (printerIndex !== null) {
         settings = getPrinterSettingsByIndex(printerIndex);
     } else {
-        settings = { orientation: 'auto', paperSize: 'auto', offsetX: 0, offsetY: 0 };
+        settings = { orientation: 'auto', paperSize: 'auto', offsetX: 0, offsetY: 0, noScale: false };
     }
     const hasCustomSettings = !isDefaultSettings(settings);
 
@@ -326,7 +384,7 @@ async function printPdf(printerName, localFilePath, printerIndex = null, overrid
             writeLog(
                 `印刷設定適用: slot=${printerIndex}, printer=${printerName}, ` +
                 `orientation=${settings.orientation}, paper=${settings.paperSize}, ` +
-                `offset=(${settings.offsetX}mm, ${settings.offsetY}mm)`,
+                `offset=(${settings.offsetX}mm, ${settings.offsetY}mm), noScale=${settings.noScale}`,
                 'info'
             );
         } catch (err) {
@@ -337,20 +395,23 @@ async function printPdf(printerName, localFilePath, printerIndex = null, overrid
 
     // SumatraPDF 用 print-settings 文字列を構築
     // paperSize は pdf-lib で既に適用済みのため、ここでは fit のみで原寸を維持
+    // 標準用紙のみ paper= を指定（SumatraPDF が認識する名前: A4/A5/B5/Letter）
+    const SUMATRA_PAPER_NAMES = ['A4', 'A5', 'B5', 'Letter'];
     function buildSumatraSettings() {
         const parts = [];
-        if (settings.paperSize !== 'auto') {
+        if (settings.paperSize !== 'auto' && SUMATRA_PAPER_NAMES.includes(settings.paperSize)) {
             parts.push(`paper=${settings.paperSize}`);
-        } else {
+        } else if (settings.paperSize === 'auto') {
             parts.push('paper=A4');
         }
+        // カスタム用紙の場合は paper= を指定しない（プリンタの既定/トレイ設定に従う）
         if (settings.orientation === 'portrait') {
             parts.push('portrait');
         } else if (settings.orientation === 'landscape') {
             parts.push('landscape');
         }
-        // カスタム設定で pdf-lib 加工済みの場合は原寸維持、それ以外は fit+shrink
-        if (hasCustomSettings) {
+        // noScale 明示 もしくは pdf-lib で加工済みの場合は原寸維持、それ以外は fit+shrink
+        if (settings.noScale || hasCustomSettings) {
             parts.push('noscale');
         } else {
             parts.push('fit', 'shrink');
@@ -431,8 +492,18 @@ async function printPdf(printerName, localFilePath, printerIndex = null, overrid
         // macOS / Linux は lp コマンドを使う
         // pdf-libで向き/サイズ/オフセットを適用済みなので、lpには用紙サイズだけ渡す
         return new Promise((resolve, reject) => {
-            const media = settings.paperSize !== 'auto' ? settings.paperSize : 'A4';
-            const cmd = `lp -d "${printerName}" -o media=${media} -o sides=one-sided "${printFilePath}"`;
+            // 標準サイズなら media= を指定、カスタムサイズなら Custom.WIDTHxHEIGHTmm 形式
+            let mediaOpt;
+            if (settings.paperSize === 'auto') {
+                mediaOpt = '-o media=A4';
+            } else if (settings.paperSize === 'Custom191x131') {
+                mediaOpt = '-o media=Custom.191x131mm';
+            } else if (settings.paperSize === 'Custom131x191') {
+                mediaOpt = '-o media=Custom.131x191mm';
+            } else {
+                mediaOpt = `-o media=${settings.paperSize}`;
+            }
+            const cmd = `lp -d "${printerName}" ${mediaOpt} -o sides=one-sided "${printFilePath}"`;
             exec(cmd, (error, stdout, stderr) => {
                 cleanupTempProcessed();
                 if (error) {
@@ -804,6 +875,24 @@ function createMainWindow() {
         }
     });
     mainWindow.loadFile('index.html');
+
+    // 開発時のみ DevTools を起動時に自動オープン
+    if (!app.isPackaged) {
+        mainWindow.webContents.once('did-finish-load', () => {
+            mainWindow.webContents.openDevTools({ mode: 'detach' });
+        });
+    }
+
+    // 開発時のみ DevTools を有効化（F12 で開閉、Ctrl+Shift+I でも開閉）
+    if (!app.isPackaged) {
+        mainWindow.webContents.on('before-input-event', (event, input) => {
+            if (input.type === 'keyDown' && (input.key === 'F12'
+                || (input.control && input.shift && (input.key === 'I' || input.key === 'i')))) {
+                mainWindow.webContents.toggleDevTools();
+                event.preventDefault();
+            }
+        });
+    }
 
     // ウィンドウを閉じる際、非表示にするだけで終了しない
     mainWindow.on('close', (event) => {
@@ -1222,6 +1311,57 @@ ipcMain.handle('start-polling', () => { startPolling(); return true; });
 ipcMain.handle('stop-polling',  () => { stopPolling();  return true; });
 ipcMain.handle('get-app-version', () => {
     return app.getVersion();
+});
+
+// プロファイル情報を取得（現在のプロファイルと利用可能なプロファイル一覧）
+ipcMain.handle('get-profile-info', async () => {
+    return {
+        active: activeProfile,
+        profiles: VALID_PROFILES.map(p => ({
+            id: p,
+            label: p === 'prod' ? '本番' : 'ステージング',
+            hasTemplate: fs.existsSync(getTemplateConfigPath(p)),
+            hasUserFile: fs.existsSync(getUserConfigPath(p))
+        }))
+    };
+});
+
+// プロファイルを切り替える
+ipcMain.handle('switch-profile', async (_e, newProfile) => {
+    if (!VALID_PROFILES.includes(newProfile)) {
+        return { success: false, error: `不正なプロファイル: ${newProfile}` };
+    }
+    if (newProfile === activeProfile) {
+        return { success: true, profile: activeProfile, message: '既に有効' };
+    }
+
+    // ポーリングを停止
+    if (isPolling) {
+        stopPolling();
+        writeLog(`プロファイル切替のためポーリングを停止しました`, 'info');
+    }
+
+    // 現在の設定を保存（プロファイル切替前に確実に保持）
+    saveConfigToFile();
+
+    // 新プロファイルに切替
+    activeProfile = newProfile;
+    configPath = getUserConfigPath(activeProfile);
+    config = loadConfigForProfile(activeProfile);
+    saveActiveProfile(activeProfile);
+
+    const label = activeProfile === 'prod' ? '本番' : 'ステージング';
+    writeLog(`プロファイルを切替えました: ${label} (${activeProfile})`, 'success');
+
+    // すべての開いているウィンドウに通知
+    BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('profile-changed', {
+            profile: activeProfile,
+            label
+        });
+    });
+
+    return { success: true, profile: activeProfile, label };
 });
 ipcMain.handle('download-sample-pdf', async () => {
     // S3からvouchers/sample.pdfをダウンロード

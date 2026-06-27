@@ -1,4 +1,19 @@
 // renderer.js
+// プロファイルバッジを更新するヘルパ
+function applyProfileBadge(el, profile) {
+    if (!el) return;
+    el.classList.remove('profile-prod', 'profile-stg');
+    if (profile === 'prod') {
+        el.classList.add('profile-prod');
+        el.textContent = '本番';
+    } else if (profile === 'stg') {
+        el.classList.add('profile-stg');
+        el.textContent = 'ステージング';
+    } else {
+        el.textContent = '---';
+    }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
     // タブ切り替え機能
     const tabs = document.querySelectorAll('.tab');
@@ -141,6 +156,22 @@ window.addEventListener('DOMContentLoaded', () => {
             console.error('Failed to get app version:', err);
         });
 
+        // プロファイル情報を取得してホームのバッジを表示
+        window.electronAPI.getProfileInfo().then(info => {
+            applyProfileBadge(document.getElementById('home-profile-badge'), info.active);
+        }).catch(err => console.error('Failed to get profile info:', err));
+
+        // プロファイル変更通知を受信
+        window.electronAPI.onProfileChanged((data) => {
+            applyProfileBadge(document.getElementById('home-profile-badge'), data.profile);
+            addLogLine(`環境プロファイルを切替えました: ${data.label}`, 'success');
+            // 停止状態にUIをリセット
+            pollingStatus.textContent = '停止中';
+            pollingStatus.style.color = '#dc3545';
+            startBtn.style.display = '';
+            stopBtn.style.display = 'none';
+        });
+
         // 初期ログメッセージ
         addLogLine('アプリケーション起動', 'info');
     }
@@ -211,7 +242,8 @@ window.addEventListener('DOMContentLoaded', () => {
                     (ps.orientation && ps.orientation !== 'auto') ||
                     (ps.paperSize && ps.paperSize !== 'auto') ||
                     (Number(ps.offsetX) || 0) !== 0 ||
-                    (Number(ps.offsetY) || 0) !== 0
+                    (Number(ps.offsetY) || 0) !== 0 ||
+                    !!ps.noScale
                 );
                 if (hasCustom) btn.classList.add('has-custom');
                 else btn.classList.remove('has-custom');
@@ -228,6 +260,22 @@ window.addEventListener('DOMContentLoaded', () => {
             }).catch(() => {});
         }
 
+        // Y方向ヘルパーテキストを noScale 状態に応じて切替
+        function updateOffsetYHelp() {
+            const noScaleEl = document.getElementById('modal-noScale');
+            const help = document.getElementById('modal-offsetY-help');
+            if (!noScaleEl || !help) return;
+            help.textContent = noScaleEl.checked
+                ? 'Y方向（下が正、上端からの下げ量）'
+                : 'Y方向（上が正）';
+        }
+
+        // noScale チェック変更時にヘルパー更新
+        const noScaleCheckEl = document.getElementById('modal-noScale');
+        if (noScaleCheckEl) {
+            noScaleCheckEl.addEventListener('change', updateOffsetYHelp);
+        }
+
         // モーダル開閉（スロット index ベース）
         let currentModalSlot = null;
         let currentModalPrinterName = null;
@@ -238,17 +286,67 @@ window.addEventListener('DOMContentLoaded', () => {
             const ps = (cfg.printerSettings || {})[String(slotIndex)] || {};
 
             document.getElementById('modal-printer-name').textContent = `スロット ${slotIndex}: ${printerName}`;
-            document.getElementById('modal-settingName').value = ps.settingName || '';
+            // 既存の input を完全に置き換えて、ハンドラや属性の残骸を一掃する
+            const oldNameInput = document.getElementById('modal-settingName');
+            if (oldNameInput && oldNameInput.parentNode) {
+                const fresh = document.createElement('input');
+                fresh.type = 'text';
+                fresh.id = 'modal-settingName';
+                fresh.name = 'modal-settingName';
+                fresh.placeholder = '例: 納品書用 / 横向きラベル など';
+                fresh.maxLength = 40;
+                fresh.autocomplete = 'off';
+                fresh.spellcheck = false;
+                fresh.value = ps.settingName || '';
+                oldNameInput.parentNode.replaceChild(fresh, oldNameInput);
+            } else if (oldNameInput) {
+                oldNameInput.value = ps.settingName || '';
+            }
             document.getElementById('modal-orientation').value = ps.orientation || 'auto';
             document.getElementById('modal-paperSize').value = ps.paperSize || 'auto';
             document.getElementById('modal-offsetX').value = Number(ps.offsetX) || 0;
             document.getElementById('modal-offsetY').value = Number(ps.offsetY) || 0;
+            const noScaleEl = document.getElementById('modal-noScale');
+            if (noScaleEl) noScaleEl.checked = !!ps.noScale;
+            updateOffsetYHelp();
 
             // テスト結果表示をクリア
             const testResult = document.getElementById('modal-test-result');
             if (testResult) { testResult.style.display = 'none'; testResult.innerHTML = ''; }
 
             document.getElementById('printer-settings-modal').classList.add('active');
+
+            // モーダルが表示されてから設定名 input にフォーカスを当てる
+            setTimeout(() => {
+                const nameInput = document.getElementById('modal-settingName');
+                if (nameInput) {
+                    nameInput.removeAttribute('readonly');
+                    nameInput.removeAttribute('disabled');
+                    nameInput.focus();
+                    const cs = getComputedStyle(nameInput);
+                    const rect = nameInput.getBoundingClientRect();
+                    // input の中心座標にある「最前面要素」を取得 - これが input でなければ別要素に覆われている
+                    const elAtCenter = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+                    console.log('[modal-settingName debug]', {
+                        focused: document.activeElement === nameInput,
+                        readonly: nameInput.readOnly,
+                        disabled: nameInput.disabled,
+                        pointerEvents: cs.pointerEvents,
+                        userSelect: cs.userSelect,
+                        zIndex: cs.zIndex,
+                        display: cs.display,
+                        visibility: cs.visibility,
+                        rect,
+                        topElementAtCenter: elAtCenter && (elAtCenter.tagName + (elAtCenter.id ? '#' + elAtCenter.id : '') + (elAtCenter.className ? '.' + elAtCenter.className : '')),
+                        topElementIsSame: elAtCenter === nameInput,
+                    });
+
+                    // 直接のクリック/フォーカス試行をフック
+                    nameInput.addEventListener('mousedown', (ev) => console.log('[input mousedown]', ev), { once: true });
+                    nameInput.addEventListener('focus', () => console.log('[input focus]'), { once: true });
+                    nameInput.addEventListener('blur', () => console.log('[input blur]'), { once: true });
+                }
+            }, 50);
         }
 
         function closePrinterSettingsModal() {
@@ -259,9 +357,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
         // モーダル: キャンセル
         document.getElementById('modal-cancel').addEventListener('click', closePrinterSettingsModal);
-        // モーダル: 背景クリックで閉じる
+        // モーダル: 背景クリックで閉じる（オーバーレイ自体のクリックのみ）
         document.getElementById('printer-settings-modal').addEventListener('click', (e) => {
-            if (e.target.id === 'printer-settings-modal') closePrinterSettingsModal();
+            if (e.target === e.currentTarget) closePrinterSettingsModal();
         });
         // モーダル: テスト印刷（現在モーダルに入力中の設定値で印刷、保存はしない）
         document.getElementById('modal-test-print').addEventListener('click', async () => {
@@ -288,6 +386,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 paperSize: document.getElementById('modal-paperSize').value,
                 offsetX: Number(document.getElementById('modal-offsetX').value) || 0,
                 offsetY: Number(document.getElementById('modal-offsetY').value) || 0,
+                noScale: document.getElementById('modal-noScale')?.checked || false,
             };
 
             // 印刷中表示
@@ -336,6 +435,7 @@ window.addEventListener('DOMContentLoaded', () => {
             const paperSize = document.getElementById('modal-paperSize').value;
             const offsetX = Number(document.getElementById('modal-offsetX').value) || 0;
             const offsetY = Number(document.getElementById('modal-offsetY').value) || 0;
+            const noScale = document.getElementById('modal-noScale')?.checked || false;
 
             const cfg = await window.electronAPI.loadConfig();
             const printerSettings = cfg.printerSettings || {};
@@ -345,11 +445,12 @@ window.addEventListener('DOMContentLoaded', () => {
                 && orientation === 'auto'
                 && paperSize === 'auto'
                 && offsetX === 0
-                && offsetY === 0;
+                && offsetY === 0
+                && !noScale;
             if (isDefault) {
                 delete printerSettings[key];
             } else {
-                printerSettings[key] = { settingName, orientation, paperSize, offsetX, offsetY };
+                printerSettings[key] = { settingName, orientation, paperSize, offsetX, offsetY, noScale };
             }
             cfg.printerSettings = printerSettings;
             await window.electronAPI.saveConfig(cfg);
@@ -564,6 +665,85 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // --- 設定タブ用処理（index.html内のタブ） ---
     if (document.getElementById('cfg-pollInterval') && document.querySelector('.tabs')) {
+        // 設定タブのフィールドを現在の config から再読込
+        async function reloadSettingsFields() {
+            const cfg = await window.electronAPI.loadConfig();
+            document.getElementById('cfg-pollInterval').value = cfg.pollInterval;
+            document.getElementById('cfg-apiHost').value = cfg.apiHost;
+            document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
+            document.getElementById('cfg-clientId').value = cfg.clientId || '';
+            document.getElementById('cfg-warehouseId').value = cfg.warehouseId || '';
+            document.getElementById('cfg-s3-bucket').value = cfg.s3.bucket || '';
+            document.getElementById('cfg-s3-region').value = cfg.s3.region || '';
+            document.getElementById('cfg-s3-accessKeyId').value = cfg.s3.accessKeyId || '';
+            document.getElementById('cfg-s3-secretAccessKey').value = cfg.s3.secretAccessKey || '';
+            document.getElementById('cfg-printMethod').value = cfg.printMethod || 'pdf-to-printer';
+            document.getElementById('cfg-sumatraPdfPath').value = cfg.sumatraPdfPath || 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe';
+        }
+
+        // プロファイル UI 初期化
+        async function initProfileSwitcher() {
+            try {
+                const info = await window.electronAPI.getProfileInfo();
+                const select = document.getElementById('profile-select');
+                if (select) select.value = info.active;
+                applyProfileBadge(document.getElementById('settings-profile-badge'), info.active);
+            } catch (err) {
+                console.error('プロファイル情報取得失敗:', err);
+            }
+        }
+        initProfileSwitcher();
+
+        // 他経路（トレイ等）からのプロファイル変更通知も反映
+        window.electronAPI.onProfileChanged(async (data) => {
+            const select = document.getElementById('profile-select');
+            if (select) select.value = data.profile;
+            applyProfileBadge(document.getElementById('settings-profile-badge'), data.profile);
+            try { await reloadSettingsFields(); } catch (_) {}
+        });
+
+        // プロファイル切替ボタン
+        document.getElementById('btn-switch-profile').addEventListener('click', async () => {
+            const select = document.getElementById('profile-select');
+            const newProfile = select.value;
+            const info = await window.electronAPI.getProfileInfo();
+            if (newProfile === info.active) {
+                alert('既に有効なプロファイルです');
+                return;
+            }
+            const label = newProfile === 'prod' ? '本番' : 'ステージング';
+            if (!confirm(
+                `環境プロファイルを「${label}」に切替えますか？\n\n` +
+                `・ポーリングが実行中の場合は停止します\n` +
+                `・画面の各設定値が切替先プロファイルの値に更新されます\n` +
+                `・現在の設定は自動的に保存されます`
+            )) {
+                // セレクトを戻す
+                select.value = info.active;
+                return;
+            }
+            try {
+                const result = await window.electronAPI.switchProfile(newProfile);
+                if (result.success) {
+                    applyProfileBadge(document.getElementById('settings-profile-badge'), result.profile);
+                    applyProfileBadge(document.getElementById('home-profile-badge'), result.profile);
+                    // 設定タブの全フィールドを更新
+                    await reloadSettingsFields();
+                    // プリンタ設定タブのselectも更新
+                    if (window.loadPrintersAndApplyConfig) {
+                        await window.loadPrintersAndApplyConfig(false);
+                    }
+                    alert(`プロファイルを「${result.label}」に切替えました`);
+                } else {
+                    alert(`切替失敗: ${result.error || '不明なエラー'}`);
+                    select.value = info.active;
+                }
+            } catch (err) {
+                alert(`切替失敗: ${err.message}`);
+                select.value = info.active;
+            }
+        });
+
         // 初期ロード時に設定を読み込み
         window.electronAPI.loadConfig().then(async cfg => {
             document.getElementById('cfg-pollInterval').value = cfg.pollInterval;

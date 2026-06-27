@@ -139,6 +139,24 @@
             border: 2px solid #ddd;
             border-radius: 6px;
             margin: 0;
+            pointer-events: auto;
+            user-select: text;
+            -webkit-user-select: text;
+        }
+        .modal input[type="text"],
+        .modal input[type="number"] {
+            background: #fff;
+            color: #333;
+            -webkit-app-region: no-drag;
+            position: relative;
+            z-index: 10;
+        }
+        .modal-overlay.active * {
+            pointer-events: auto;
+        }
+        .modal-overlay.active .modal {
+            position: relative;
+            z-index: 1001;
         }
         .modal .offset-row {
             display: grid;
@@ -335,6 +353,50 @@
             font-weight: 700;
             color: #667eea;
         }
+        .profile-badge {
+            display: inline-block;
+            padding: 3px 12px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #fff;
+            border-radius: 12px;
+            background: #888;
+            letter-spacing: 0.5px;
+        }
+        .profile-badge.profile-prod {
+            background: #dc3545;
+        }
+        .profile-badge.profile-stg {
+            background: #2196f3;
+        }
+        .profile-switcher {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        .profile-switcher label {
+            margin: 0;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        .profile-switcher select {
+            flex: 1;
+            margin: 0;
+            padding: 4px 8px;
+            font-size: 13px;
+        }
+        .profile-switcher button {
+            width: auto;
+            margin: 0;
+            padding: 4px 12px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
         .settings-box {
             border: 1px solid #ddd;
             border-radius: 0;
@@ -402,6 +464,10 @@
             <h2>ポーリング制御</h2>
             <div class="status-box">
                 <div class="status-item">
+                    <span class="status-label">環境:</span>
+                    <span id="home-profile-badge" class="profile-badge">---</span>
+                </div>
+                <div class="status-item">
                     <span class="status-label">状態:</span>
                     <span id="polling-status" class="status-value">停止中</span>
                 </div>
@@ -454,6 +520,16 @@
     </div>
 
     <div id="tab-settings" class="tab-content">
+        <div class="profile-switcher">
+            <label>環境プロファイル:</label>
+            <span id="settings-profile-badge" class="profile-badge">---</span>
+            <select id="profile-select">
+                <option value="prod">本番</option>
+                <option value="stg">ステージング</option>
+            </select>
+            <button id="btn-switch-profile" type="button">🔄 切替</button>
+        </div>
+
         <div class="settings-box">
             <div class="printer-grid">
                 <div>
@@ -534,8 +610,10 @@
         <h3>🖨️ プリンタ別印刷設定</h3>
         <div class="modal-subtitle" id="modal-printer-name">---</div>
 
-        <label>設定名（メモ）</label>
-        <input type="text" id="modal-settingName" placeholder="例: 納品書用 / 横向きラベル など" maxlength="40" />
+        <div style="position: relative; z-index: 20;">
+            <label for="modal-settingName">設定名（メモ）</label>
+            <input type="text" id="modal-settingName" name="modal-settingName" placeholder="例: 納品書用 / 横向きラベル など" maxlength="40" autocomplete="off" spellcheck="false" />
+        </div>
 
         <label>印刷向き</label>
         <select id="modal-orientation">
@@ -551,7 +629,17 @@
             <option value="A5">A5</option>
             <option value="B5">B5</option>
             <option value="Letter">Letter</option>
+            <option value="Custom191x131">カスタム 191×131 mm（横長）</option>
+            <option value="Custom131x191">カスタム 131×191 mm（縦長）</option>
         </select>
+
+        <div style="position: relative; z-index: 20; margin-top: 8px;">
+            <label style="display: flex; align-items: center; gap: 6px; margin: 0; cursor: pointer;">
+                <input type="checkbox" id="modal-noScale" style="width: auto; margin: 0;" />
+                <span>縮小しない（原寸印刷、上端揃え）</span>
+            </label>
+            <div class="help-text">オン: 用紙より大きくても縮小せず、用紙の上端・左右中央に配置</div>
+        </div>
 
         <label>印刷位置オフセット (mm)</label>
         <div class="offset-row">
@@ -561,7 +649,7 @@
             </div>
             <div>
                 <input type="number" id="modal-offsetY" step="0.5" value="0" />
-                <div class="help-text">Y方向（上が正）</div>
+                <div class="help-text" id="modal-offsetY-help">Y方向（上が正）</div>
             </div>
         </div>
 

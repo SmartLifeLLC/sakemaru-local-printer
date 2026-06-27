@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testPrintWithSettings: (printerName, filePath, settings) =>
         ipcRenderer.invoke('test-print-with-settings', { printerName, filePath, settings }),
 
+    // プロファイル切替 (v1.3)
+    getProfileInfo:   () => ipcRenderer.invoke('get-profile-info'),
+    switchProfile:    (profile) => ipcRenderer.invoke('switch-profile', profile),
+    onProfileChanged: (callback) => ipcRenderer.on('profile-changed', (_e, data) => callback(data)),
+
     // ステータスウィンドウ向け：ポーリング状況を受け取る
     onPollStatus:     (callback) => ipcRenderer.on('poll-status', (_e, data) => callback(data)),
 });
