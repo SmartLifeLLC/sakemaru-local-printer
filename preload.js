@@ -18,6 +18,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // プリンタ同期 (v2.2)
     syncPrinters:     (warehouseId, printers) => ipcRenderer.invoke('sync-printers', { warehouseId, printers }),
 
+    // テスト印刷 (v1.3)
+    pickPdfFile:      () => ipcRenderer.invoke('pick-pdf-file'),
+    testPrintWithSettings: (printerName, filePath, settings) =>
+        ipcRenderer.invoke('test-print-with-settings', { printerName, filePath, settings }),
+
     // ステータスウィンドウ向け：ポーリング状況を受け取る
     onPollStatus:     (callback) => ipcRenderer.on('poll-status', (_e, data) => callback(data)),
 });

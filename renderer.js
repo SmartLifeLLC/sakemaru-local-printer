@@ -164,20 +164,201 @@ window.addEventListener('DOMContentLoaded', () => {
                     <select id="printer${i}">
                         <option value="">（未設定）</option>
                     </select>
+                    <button type="button" class="printer-settings-btn" data-printer-slot="${i}" title="印刷設定" disabled>⚙️</button>
                 `;
                 grid.appendChild(slot);
             }
 
-            // 各selectに変更イベントを追加して重複チェック
+            // 各selectに変更イベントを追加して重複チェック+設定ボタン状態更新
             for (let i = 0; i < MAX_PRINTERS; i++) {
                 const select = document.getElementById(`printer${i}`);
                 if (select) {
-                    select.addEventListener('change', checkDuplicatePrinters);
+                    select.addEventListener('change', () => {
+                        checkDuplicatePrinters();
+                        updateSettingsButtonState(i);
+                    });
                 }
             }
+
+            // 設定ボタンクリック
+            grid.querySelectorAll('.printer-settings-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const slotIndex = Number(btn.getAttribute('data-printer-slot'));
+                    const printerName = document.getElementById(`printer${slotIndex}`).value;
+                    if (printerName) openPrinterSettingsModal(slotIndex, printerName);
+                });
+            });
         }
 
-        // 重複プリンタをチェック
+        // 設定ボタンの有効/無効、「カスタム済」表示、設定名表示を更新
+        // v1.3: 設定はプリンタスロット index ベース
+        function updateSettingsButtonState(slotIndex) {
+            const select = document.getElementById(`printer${slotIndex}`);
+            const btn = document.querySelector(`.printer-settings-btn[data-printer-slot="${slotIndex}"]`);
+            if (!select || !btn) return;
+            const printerName = select.value;
+            if (!printerName) {
+                btn.disabled = true;
+                btn.classList.remove('has-custom');
+                btn.textContent = '⚙️';
+                btn.title = '印刷設定';
+                return;
+            }
+            btn.disabled = false;
+            window.electronAPI.loadConfig().then(cfg => {
+                const ps = (cfg.printerSettings || {})[String(slotIndex)];
+                const hasCustom = ps && (
+                    (ps.orientation && ps.orientation !== 'auto') ||
+                    (ps.paperSize && ps.paperSize !== 'auto') ||
+                    (Number(ps.offsetX) || 0) !== 0 ||
+                    (Number(ps.offsetY) || 0) !== 0
+                );
+                if (hasCustom) btn.classList.add('has-custom');
+                else btn.classList.remove('has-custom');
+
+                // 設定名があればボタンに表示、なければアイコンのみ
+                const name = ps && ps.settingName ? String(ps.settingName).trim() : '';
+                if (name) {
+                    btn.textContent = `⚙️ ${name}`;
+                    btn.title = `${name}（クリックで編集）`;
+                } else {
+                    btn.textContent = '⚙️';
+                    btn.title = hasCustom ? '印刷設定（カスタム済）' : '印刷設定';
+                }
+            }).catch(() => {});
+        }
+
+        // モーダル開閉（スロット index ベース）
+        let currentModalSlot = null;
+        let currentModalPrinterName = null;
+        async function openPrinterSettingsModal(slotIndex, printerName) {
+            currentModalSlot = slotIndex;
+            currentModalPrinterName = printerName;
+            const cfg = await window.electronAPI.loadConfig();
+            const ps = (cfg.printerSettings || {})[String(slotIndex)] || {};
+
+            document.getElementById('modal-printer-name').textContent = `スロット ${slotIndex}: ${printerName}`;
+            document.getElementById('modal-settingName').value = ps.settingName || '';
+            document.getElementById('modal-orientation').value = ps.orientation || 'auto';
+            document.getElementById('modal-paperSize').value = ps.paperSize || 'auto';
+            document.getElementById('modal-offsetX').value = Number(ps.offsetX) || 0;
+            document.getElementById('modal-offsetY').value = Number(ps.offsetY) || 0;
+
+            // テスト結果表示をクリア
+            const testResult = document.getElementById('modal-test-result');
+            if (testResult) { testResult.style.display = 'none'; testResult.innerHTML = ''; }
+
+            document.getElementById('printer-settings-modal').classList.add('active');
+        }
+
+        function closePrinterSettingsModal() {
+            document.getElementById('printer-settings-modal').classList.remove('active');
+            currentModalSlot = null;
+            currentModalPrinterName = null;
+        }
+
+        // モーダル: キャンセル
+        document.getElementById('modal-cancel').addEventListener('click', closePrinterSettingsModal);
+        // モーダル: 背景クリックで閉じる
+        document.getElementById('printer-settings-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'printer-settings-modal') closePrinterSettingsModal();
+        });
+        // モーダル: テスト印刷（現在モーダルに入力中の設定値で印刷、保存はしない）
+        document.getElementById('modal-test-print').addEventListener('click', async () => {
+            if (currentModalSlot === null || !currentModalPrinterName) return;
+            const resultDiv = document.getElementById('modal-test-result');
+            const btn = document.getElementById('modal-test-print');
+
+            // PDFファイル選択
+            let filePath;
+            try {
+                filePath = await window.electronAPI.pickPdfFile();
+            } catch (e) {
+                resultDiv.style.display = 'block';
+                resultDiv.style.backgroundColor = '#ffebee';
+                resultDiv.style.border = '1px solid #f44336';
+                resultDiv.innerHTML = `❌ ファイル選択エラー: ${e.message}`;
+                return;
+            }
+            if (!filePath) return; // キャンセル
+
+            // 現在モーダルに入力中の設定値を取得
+            const settings = {
+                orientation: document.getElementById('modal-orientation').value,
+                paperSize: document.getElementById('modal-paperSize').value,
+                offsetX: Number(document.getElementById('modal-offsetX').value) || 0,
+                offsetY: Number(document.getElementById('modal-offsetY').value) || 0,
+            };
+
+            // 印刷中表示
+            resultDiv.style.display = 'block';
+            resultDiv.style.backgroundColor = '#e3f2fd';
+            resultDiv.style.border = '1px solid #2196f3';
+            resultDiv.innerHTML = `⏳ 印刷中: ${filePath.split(/[\\/]/).pop()}`;
+            btn.disabled = true;
+
+            try {
+                await window.electronAPI.testPrintWithSettings(
+                    currentModalPrinterName,
+                    filePath,
+                    settings
+                );
+                resultDiv.style.backgroundColor = '#e8f5e9';
+                resultDiv.style.border = '1px solid #4caf50';
+                resultDiv.innerHTML = `✅ テスト印刷を送信しました（${currentModalPrinterName}）`;
+            } catch (e) {
+                resultDiv.style.backgroundColor = '#ffebee';
+                resultDiv.style.border = '1px solid #f44336';
+                resultDiv.innerHTML = `❌ 印刷失敗: ${e.message}`;
+            } finally {
+                btn.disabled = false;
+            }
+        });
+        // モーダル: リセット（設定削除）
+        document.getElementById('modal-reset').addEventListener('click', async () => {
+            if (currentModalSlot === null) return;
+            const key = String(currentModalSlot);
+            if (!confirm(`スロット ${currentModalSlot} の印刷設定をリセットしますか？`)) return;
+            const cfg = await window.electronAPI.loadConfig();
+            const printerSettings = cfg.printerSettings || {};
+            delete printerSettings[key];
+            cfg.printerSettings = printerSettings;
+            await window.electronAPI.saveConfig(cfg);
+            closePrinterSettingsModal();
+            for (let i = 0; i < MAX_PRINTERS; i++) updateSettingsButtonState(i);
+        });
+        // モーダル: 保存
+        document.getElementById('modal-save').addEventListener('click', async () => {
+            if (currentModalSlot === null) return;
+            const key = String(currentModalSlot);
+            const settingName = document.getElementById('modal-settingName').value.trim();
+            const orientation = document.getElementById('modal-orientation').value;
+            const paperSize = document.getElementById('modal-paperSize').value;
+            const offsetX = Number(document.getElementById('modal-offsetX').value) || 0;
+            const offsetY = Number(document.getElementById('modal-offsetY').value) || 0;
+
+            const cfg = await window.electronAPI.loadConfig();
+            const printerSettings = cfg.printerSettings || {};
+
+            // 設定値がすべてデフォルトかつ設定名も空なら削除（＝未設定状態）
+            const isDefault = !settingName
+                && orientation === 'auto'
+                && paperSize === 'auto'
+                && offsetX === 0
+                && offsetY === 0;
+            if (isDefault) {
+                delete printerSettings[key];
+            } else {
+                printerSettings[key] = { settingName, orientation, paperSize, offsetX, offsetY };
+            }
+            cfg.printerSettings = printerSettings;
+            await window.electronAPI.saveConfig(cfg);
+            closePrinterSettingsModal();
+            for (let i = 0; i < MAX_PRINTERS; i++) updateSettingsButtonState(i);
+        });
+
+        // 同一プリンタが複数スロットに割当てられているかチェック（情報表示のみ、保存はブロックしない）
+        // 同名プリンタでもスロットごとに別設定で印刷できるため、重複は許可する仕様。
         function checkDuplicatePrinters() {
             const selectedPrinters = [];
             const duplicates = new Set();
@@ -193,25 +374,19 @@ window.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            // 警告表示
+            // 情報表示（重複してもボーダーは変えず、案内文だけ出す）
             const warning = document.getElementById('printer-duplicate-warning');
             if (warning) {
                 warning.style.display = duplicates.size > 0 ? 'block' : 'none';
             }
 
-            // 重複しているselectをハイライト
+            // ボーダーはニュートラルに固定
             for (let i = 0; i < MAX_PRINTERS; i++) {
                 const select = document.getElementById(`printer${i}`);
-                if (select) {
-                    if (select.value && duplicates.has(select.value)) {
-                        select.style.borderColor = '#dc3545';
-                    } else {
-                        select.style.borderColor = '#ddd';
-                    }
-                }
+                if (select) select.style.borderColor = '#ddd';
             }
 
-            return duplicates.size === 0;
+            return true; // 常に保存可能
         }
 
         // プリンタ一覧を読み込んで設定を反映する関数
@@ -280,6 +455,9 @@ window.addEventListener('DOMContentLoaded', () => {
                 // 重複チェック
                 checkDuplicatePrinters();
 
+                // 設定ボタンの状態を反映
+                for (let i = 0; i < MAX_PRINTERS; i++) updateSettingsButtonState(i);
+
                 if (showAlert) {
                     alert(`プリンタ一覧を読み込みました（${ps.length}台）`);
                 }
@@ -304,11 +482,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
         // プリンタ設定を保存 & サーバーに同期
         document.getElementById('btn-save-printers').addEventListener('click', async () => {
-            // 重複チェック
-            if (!checkDuplicatePrinters()) {
-                alert('⚠️ 同じプリンタが複数選択されています。\n重複を解除してから保存してください。');
-                return;
-            }
+            // 重複は警告のみで保存ブロックしない
+            checkDuplicatePrinters();
 
             try {
                 const cfg = await window.electronAPI.loadConfig();
@@ -323,21 +498,19 @@ window.addEventListener('DOMContentLoaded', () => {
                 await window.electronAPI.saveConfig(cfg);
 
                 // 倉庫IDが設定されている場合、サーバーに同期
+                // v1.3: スロット index ベースで全スロットを送信（同名プリンタの重複除去は行わない）
                 if (cfg.warehouseId && String(cfg.warehouseId).trim() !== '') {
-                    // 重複を除去してユニークなプリンタのみ送信
-                    const uniquePrinters = new Map();
+                    const printers = [];
                     for (let i = 0; i < MAX_PRINTERS; i++) {
                         const printerName = cfg[`printer${i}`];
-                        if (printerName && !uniquePrinters.has(printerName)) {
-                            uniquePrinters.set(printerName, {
+                        if (printerName) {
+                            printers.push({
                                 printer_index: i,
                                 name: printerName,
-                                is_default: uniquePrinters.size === 0 // 最初のプリンタをデフォルトに
+                                is_default: printers.length === 0 // 最初に登場したスロットをデフォルト
                             });
                         }
                     }
-
-                    const printers = Array.from(uniquePrinters.values());
 
                     if (printers.length > 0) {
                         const syncResult = await window.electronAPI.syncPrinters(cfg.warehouseId, printers);
@@ -586,6 +759,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 printer9: currentCfg.printer9 || '',
                 printMethod: document.getElementById('cfg-printMethod').value,
                 sumatraPdfPath: document.getElementById('cfg-sumatraPdfPath').value,
+                printerSettings: currentCfg.printerSettings || {},
                 s3: {
                     bucket: document.getElementById('cfg-s3-bucket').value,
                     region: document.getElementById('cfg-s3-region').value,

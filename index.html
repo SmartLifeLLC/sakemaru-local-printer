@@ -57,6 +57,120 @@
             border-width: 1px;
             border-radius: 0;
         }
+        .printer-settings-btn {
+            width: auto !important;
+            padding: 2px 6px !important;
+            margin: 0 !important;
+            font-size: 12px !important;
+            background: transparent !important;
+            color: #667eea !important;
+            border: 1px solid #ddd !important;
+            border-radius: 4px !important;
+            cursor: pointer;
+            line-height: 1.2;
+            box-shadow: none !important;
+            font-weight: normal !important;
+            max-width: 140px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .printer-settings-btn:hover {
+            background: rgba(102, 126, 234, 0.1) !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+        .printer-settings-btn:disabled {
+            color: #ccc !important;
+            cursor: not-allowed;
+            background: transparent !important;
+        }
+        .printer-settings-btn.has-custom {
+            color: #fff !important;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            border-color: #667eea !important;
+        }
+
+        /* モーダル */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .modal {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            width: 420px;
+            max-width: 92vw;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        .modal h3 {
+            margin: 0 0 5px 0;
+            color: #667eea;
+            font-size: 18px;
+        }
+        .modal .modal-subtitle {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 15px;
+            word-break: break-all;
+        }
+        .modal label {
+            display: block;
+            font-weight: 600;
+            color: #555;
+            margin-top: 10px;
+            margin-bottom: 4px;
+            font-size: 13px;
+        }
+        .modal select,
+        .modal input {
+            width: 100%;
+            padding: 6px 8px;
+            font-size: 13px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            margin: 0;
+        }
+        .modal .offset-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .modal .help-text {
+            font-size: 11px;
+            color: #888;
+            margin-top: 3px;
+        }
+        .modal .modal-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 18px;
+        }
+        .modal .modal-actions button {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 13px;
+            margin: 0;
+        }
+        .btn-outline {
+            background: #f5f5f5 !important;
+            color: #555 !important;
+            border: 1px solid #ddd !important;
+        }
+        .btn-outline:hover {
+            background: #eaeaea !important;
+            box-shadow: none !important;
+            transform: none !important;
+        }
         h1 {
             color: #667eea;
             font-size: 28px;
@@ -324,8 +438,8 @@
             <div class="printer-grid" id="printer-grid">
                 <!-- プリンタスロットはrenderer.jsで動的に生成 -->
             </div>
-            <div id="printer-duplicate-warning" style="display: none; color: #dc3545; font-size: 13px; margin-top: 5px;">
-                ⚠️ 同じプリンタが複数選択されています
+            <div id="printer-duplicate-warning" style="display: none; color: #555; font-size: 12px; margin-top: 5px;">
+                ℹ️ 同じプリンタが複数のスロットに割当てられています。スロットごとに別設定で印刷できます。
             </div>
         </div>
 
@@ -411,6 +525,56 @@
             <button id="btn-save-config" class="btn-secondary" style="padding: 6px 12px; font-size: 13px;">💾 設定を保存</button>
         </div>
         <div id="api-test-result" style="margin-top:6px; padding:6px 8px; display:none; border-radius:6px; font-size: 12px;"></div>
+    </div>
+</div>
+
+<!-- プリンタ別印刷設定モーダル -->
+<div id="printer-settings-modal" class="modal-overlay">
+    <div class="modal">
+        <h3>🖨️ プリンタ別印刷設定</h3>
+        <div class="modal-subtitle" id="modal-printer-name">---</div>
+
+        <label>設定名（メモ）</label>
+        <input type="text" id="modal-settingName" placeholder="例: 納品書用 / 横向きラベル など" maxlength="40" />
+
+        <label>印刷向き</label>
+        <select id="modal-orientation">
+            <option value="auto">自動（PDFの向きに従う）</option>
+            <option value="portrait">縦（portrait）</option>
+            <option value="landscape">横（landscape）</option>
+        </select>
+
+        <label>用紙サイズ</label>
+        <select id="modal-paperSize">
+            <option value="auto">自動（PDFのサイズに従う）</option>
+            <option value="A4">A4</option>
+            <option value="A5">A5</option>
+            <option value="B5">B5</option>
+            <option value="Letter">Letter</option>
+        </select>
+
+        <label>印刷位置オフセット (mm)</label>
+        <div class="offset-row">
+            <div>
+                <input type="number" id="modal-offsetX" step="0.5" value="0" />
+                <div class="help-text">X方向（右が正）</div>
+            </div>
+            <div>
+                <input type="number" id="modal-offsetY" step="0.5" value="0" />
+                <div class="help-text">Y方向（上が正）</div>
+            </div>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 14px;">
+            <button id="modal-test-print" type="button" style="padding: 8px 12px; font-size: 13px; margin: 0; flex: 1;">🧪 PDFを選んでテスト印刷</button>
+        </div>
+        <div id="modal-test-result" style="display: none; margin-top: 6px; padding: 6px 8px; border-radius: 6px; font-size: 12px;"></div>
+
+        <div class="modal-actions">
+            <button id="modal-reset" class="btn-outline" type="button">リセット</button>
+            <button id="modal-cancel" class="btn-outline" type="button">キャンセル</button>
+            <button id="modal-save" class="btn-secondary" type="button">💾 保存</button>
+        </div>
     </div>
 </div>
 

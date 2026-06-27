@@ -10,6 +10,7 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { exec, execFile } = require('child_process');
 const crypto = require('crypto');
 const printerLib = require('pdf-to-printer'); // 追加が必要
+const { PDFDocument, degrees } = require('pdf-lib');
 const AutoLaunch = require('auto-launch');
 
 // アプリケーション名を設定
@@ -72,6 +73,7 @@ const defaultConfig = {
     printer9: '',
     printMethod: 'pdf-to-printer', // 'pdf-to-printer' or 'sumatra-direct'
     sumatraPdfPath: 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe',
+    printerSettings: {}, // プリンタ別印刷設定 { [printerName]: { orientation, paperSize, offsetX, offsetY } }
     s3: {
         bucket: '',
         region: 'ap-northeast-1',
@@ -197,8 +199,170 @@ function getLocalIp() {
 }
 
 
-async function printPdf(printerName, localFilePath) {
+// プリンタ別印刷設定を取得（プリンタスロット index ベース）
+// 未設定/未指定の項目は 'auto' / 0 として返す
+function getPrinterSettingsByIndex(printerIndex) {
+    const key = String(printerIndex);
+    const settings = (config.printerSettings && config.printerSettings[key]) || {};
+    return {
+        orientation: settings.orientation || 'auto', // 'auto' | 'portrait' | 'landscape'
+        paperSize: settings.paperSize || 'auto',     // 'auto' | 'A4' | 'A5' | 'B5' | 'Letter'
+        offsetX: Number(settings.offsetX) || 0,      // mm
+        offsetY: Number(settings.offsetY) || 0,      // mm
+    };
+}
+
+// 用紙サイズ名 → ポイント (1mm = 2.834645669pt)
+const PAPER_SIZES_PT = {
+    A4:     { width: 595.28, height: 841.89 },
+    A5:     { width: 419.53, height: 595.28 },
+    B5:     { width: 498.90, height: 708.66 },
+    Letter: { width: 612.00, height: 792.00 },
+};
+
+// 設定がすべてデフォルト（auto / 0）かどうか
+function isDefaultSettings(s) {
+    return s.orientation === 'auto'
+        && s.paperSize === 'auto'
+        && (!s.offsetX || s.offsetX === 0)
+        && (!s.offsetY || s.offsetY === 0);
+}
+
+// pdf-libでPDFに印刷設定を適用して新しい一時PDFを生成
+// 戻り値: 加工後の一時ファイルパス（呼び出し側で削除責務を持つ）
+async function applyPrintSettingsToPdf(localFilePath, settings) {
+    const MM_TO_PT = 2.834645669;
+    const srcBytes = fs.readFileSync(localFilePath);
+    const srcDoc = await PDFDocument.load(srcBytes);
+    const outDoc = await PDFDocument.create();
+
+    const srcPages = srcDoc.getPages();
+    const srcIndices = srcPages.map((_, i) => i);
+    const copiedPages = await outDoc.copyPages(srcDoc, srcIndices);
+
+    const targetPaper = settings.paperSize !== 'auto' ? PAPER_SIZES_PT[settings.paperSize] : null;
+    const offsetXPt = (settings.offsetX || 0) * MM_TO_PT;
+    const offsetYPt = (settings.offsetY || 0) * MM_TO_PT;
+
+    for (let i = 0; i < copiedPages.length; i++) {
+        const srcPage = copiedPages[i];
+        const { width: srcW, height: srcH } = srcPage.getSize();
+
+        // ターゲットの用紙サイズと向きを決定
+        let targetW, targetH;
+        if (targetPaper) {
+            targetW = targetPaper.width;
+            targetH = targetPaper.height;
+        } else {
+            targetW = srcW;
+            targetH = srcH;
+        }
+
+        // 向き指定がある場合は targetW/H を入れ替え
+        if (settings.orientation === 'landscape' && targetW < targetH) {
+            [targetW, targetH] = [targetH, targetW];
+        } else if (settings.orientation === 'portrait' && targetW > targetH) {
+            [targetW, targetH] = [targetH, targetW];
+        }
+
+        // 新規ページを作成し、元ページを XObject として埋め込み
+        const newPage = outDoc.addPage([targetW, targetH]);
+        const embedded = await outDoc.embedPage(srcPage);
+
+        // フィット率（用紙に収まるよう縮小、拡大はしない）
+        const scale = Math.min(targetW / srcW, targetH / srcH, 1);
+        const drawnW = srcW * scale;
+        const drawnH = srcH * scale;
+
+        // 中央配置 + ユーザー指定オフセット（offsetY は上方向を正とする）
+        const x = (targetW - drawnW) / 2 + offsetXPt;
+        const y = (targetH - drawnH) / 2 + offsetYPt;
+
+        newPage.drawPage(embedded, {
+            x,
+            y,
+            xScale: scale,
+            yScale: scale,
+        });
+    }
+
+    const outBytes = await outDoc.save();
+    const outPath = path.join(
+        app.getPath('temp'),
+        `print_${Date.now()}_${path.basename(localFilePath)}`
+    );
+    fs.writeFileSync(outPath, outBytes);
+    return outPath;
+}
+
+async function printPdf(printerName, localFilePath, printerIndex = null, overrideSettings = null) {
     const platform = os.platform();
+    // overrideSettings が渡されていればそれを優先（テスト印刷用）。
+    // それ以外で printerIndex が指定されていればそのスロットの設定。
+    // どちらもない場合はデフォルト。
+    let settings;
+    if (overrideSettings) {
+        settings = {
+            orientation: overrideSettings.orientation || 'auto',
+            paperSize: overrideSettings.paperSize || 'auto',
+            offsetX: Number(overrideSettings.offsetX) || 0,
+            offsetY: Number(overrideSettings.offsetY) || 0,
+        };
+    } else if (printerIndex !== null) {
+        settings = getPrinterSettingsByIndex(printerIndex);
+    } else {
+        settings = { orientation: 'auto', paperSize: 'auto', offsetX: 0, offsetY: 0 };
+    }
+    const hasCustomSettings = !isDefaultSettings(settings);
+
+    // カスタム設定がある場合は pdf-lib で加工した一時PDFを使用
+    let printFilePath = localFilePath;
+    let tempProcessedPath = null;
+
+    if (hasCustomSettings) {
+        try {
+            tempProcessedPath = await applyPrintSettingsToPdf(localFilePath, settings);
+            printFilePath = tempProcessedPath;
+            writeLog(
+                `印刷設定適用: slot=${printerIndex}, printer=${printerName}, ` +
+                `orientation=${settings.orientation}, paper=${settings.paperSize}, ` +
+                `offset=(${settings.offsetX}mm, ${settings.offsetY}mm)`,
+                'info'
+            );
+        } catch (err) {
+            writeLog(`印刷設定適用エラー（元のPDFで印刷続行）: ${err.message}`, 'error');
+            printFilePath = localFilePath;
+        }
+    }
+
+    // SumatraPDF 用 print-settings 文字列を構築
+    // paperSize は pdf-lib で既に適用済みのため、ここでは fit のみで原寸を維持
+    function buildSumatraSettings() {
+        const parts = [];
+        if (settings.paperSize !== 'auto') {
+            parts.push(`paper=${settings.paperSize}`);
+        } else {
+            parts.push('paper=A4');
+        }
+        if (settings.orientation === 'portrait') {
+            parts.push('portrait');
+        } else if (settings.orientation === 'landscape') {
+            parts.push('landscape');
+        }
+        // カスタム設定で pdf-lib 加工済みの場合は原寸維持、それ以外は fit+shrink
+        if (hasCustomSettings) {
+            parts.push('noscale');
+        } else {
+            parts.push('fit', 'shrink');
+        }
+        return parts.join(',');
+    }
+
+    const cleanupTempProcessed = () => {
+        if (tempProcessedPath) {
+            try { fs.unlinkSync(tempProcessedPath); } catch (_) {}
+        }
+    };
 
     if (platform === 'win32') {
         const printMethod = config.printMethod || 'pdf-to-printer';
@@ -213,20 +377,23 @@ async function printPdf(printerName, localFilePath) {
                     const error = new Error(`SumatraPDF not found at: ${sumatraPath}`);
                     console.error('Print error:', error.message);
                     writeLog(`印刷エラー: SumatraPDFが見つかりません (${sumatraPath})`, 'error');
+                    cleanupTempProcessed();
                     reject(error);
                     return;
                 }
 
-                console.log(`Printing to ${printerName} using SumatraPDF: ${localFilePath}`);
-                writeLog(`印刷開始 (SumatraPDF直接): ${printerName}`, 'info');
+                const printSettings = buildSumatraSettings();
+                console.log(`Printing to ${printerName} using SumatraPDF: ${printFilePath} (${printSettings})`);
+                writeLog(`印刷開始 (SumatraPDF直接): ${printerName} [${printSettings}]`, 'info');
 
                 const args = [
                     '-print-to', printerName,
-                    '-print-settings', 'paper=A4,fit',
-                    localFilePath
+                    '-print-settings', printSettings,
+                    printFilePath
                 ];
 
                 execFile(sumatraPath, args, (error, stdout, stderr) => {
+                    cleanupTempProcessed();
                     if (error) {
                         console.error('SumatraPDF print error:', stderr || error.message);
                         writeLog(`印刷エラー (SumatraPDF): ${error.message}`, 'error');
@@ -241,12 +408,13 @@ async function printPdf(printerName, localFilePath) {
         } else {
             // pdf-to-printerライブラリを使う方式（デフォルト）
             try {
-                console.log(`Printing to ${printerName} using pdf-to-printer: ${localFilePath}`);
-                writeLog(`印刷開始 (pdf-to-printer): ${printerName}`, 'info');
+                const printSettings = buildSumatraSettings();
+                console.log(`Printing to ${printerName} using pdf-to-printer: ${printFilePath} (${printSettings})`);
+                writeLog(`印刷開始 (pdf-to-printer): ${printerName} [${printSettings}]`, 'info');
 
-                const result = await printerLib.print(localFilePath, {
+                const result = await printerLib.print(printFilePath, {
                     printer: printerName,
-                    win32: ['-print-settings "paper=A4,fit,shrink"']
+                    win32: [`-print-settings "${printSettings}"`]
                 });
 
                 writeLog(`印刷完了 (pdf-to-printer): ${printerName}`, 'success');
@@ -255,13 +423,18 @@ async function printPdf(printerName, localFilePath) {
                 console.error('Print error:', error);
                 writeLog(`印刷エラー (pdf-to-printer): ${error.message}`, 'error');
                 throw error;
+            } finally {
+                cleanupTempProcessed();
             }
         }
     } else if (platform === 'darwin' || platform === 'linux') {
-        // macOS / Linux は lp コマンドを使う（A4用紙サイズを指定、片面印刷）
+        // macOS / Linux は lp コマンドを使う
+        // pdf-libで向き/サイズ/オフセットを適用済みなので、lpには用紙サイズだけ渡す
         return new Promise((resolve, reject) => {
-            const cmd = `lp -d "${printerName}" -o media=A4 -o sides=one-sided "${localFilePath}"`;
+            const media = settings.paperSize !== 'auto' ? settings.paperSize : 'A4';
+            const cmd = `lp -d "${printerName}" -o media=${media} -o sides=one-sided "${printFilePath}"`;
             exec(cmd, (error, stdout, stderr) => {
+                cleanupTempProcessed();
                 if (error) {
                     console.error('lp error:', stderr || error.message);
                     reject(new Error(stderr || error.message));
@@ -272,6 +445,7 @@ async function printPdf(printerName, localFilePath) {
             });
         });
     } else {
+        cleanupTempProcessed();
         throw new Error('Unsupported OS for printing.');
     }
 }
@@ -389,21 +563,42 @@ async function pollTask() {
         if (data && Array.isArray(data) && data.length > 0) {
             writeLog(`${data.length}個の印刷ジョブを受信しました`, 'info');
 
-            // APIレスポンスを内部形式に変換 (v2.2対応)
-            const jobs = data.map(item => ({
-                file_id: item.id,
-                print_type: item.print_type,
-                file_url: item.file_path,
-                // v2.2: サーバーからprinter_name, printer_indexが直接返される
-                printer_driver_id: item.printer_driver_id || null,
-                printer_name: item.printer_name || null,
-                printer_index: item.printer_index ?? item.printer_drivers?.printer_index ?? 0,
-                routing_type: item.routing_type || 'default',
-                warehouse_id: item.warehouse_id || item.printer_drivers?.warehouse_id,
-                buyer_id: item.buyer_id,
-                buyer_name: item.buyer_name,
-                order: item.order ?? item.id // order指定がなければIDを使用
-            }));
+            // APIレスポンスを内部形式に変換 (v1.3: printer_index 必須化)
+            const jobs = data.map(item => {
+                // printer_index はサーバーから必ず受け取る想定。
+                // 未指定の場合は警告ログを出して 0 にフォールバック。
+                const rawIndex = item.printer_index ?? item.printer_drivers?.printer_index;
+                let printerIndex;
+                if (rawIndex === undefined || rawIndex === null) {
+                    writeLog(
+                        `警告: ジョブ ID=${item.id} に printer_index が指定されていません。printer0 にフォールバックします`,
+                        'error'
+                    );
+                    printerIndex = 0;
+                } else {
+                    printerIndex = Number(rawIndex);
+                    if (!Number.isInteger(printerIndex) || printerIndex < 0 || printerIndex >= MAX_PRINTERS) {
+                        writeLog(
+                            `警告: ジョブ ID=${item.id} の printer_index (${rawIndex}) が範囲外です。printer0 にフォールバックします`,
+                            'error'
+                        );
+                        printerIndex = 0;
+                    }
+                }
+
+                return {
+                    file_id: item.id,
+                    print_type: item.print_type,
+                    file_url: item.file_path,
+                    printer_driver_id: item.printer_driver_id || null,
+                    printer_index: printerIndex,
+                    routing_type: item.routing_type || 'default',
+                    warehouse_id: item.warehouse_id || item.printer_drivers?.warehouse_id,
+                    buyer_id: item.buyer_id,
+                    buyer_name: item.buyer_name,
+                    order: item.order ?? item.id // order指定がなければIDを使用
+                };
+            });
 
             // order順にソート
             const sortedJobs = [...jobs].sort((a, b) => a.order - b.order);
@@ -429,33 +624,29 @@ async function pollTask() {
                     continue;
                 }
 
-                // v2.2: サーバーからprinter_nameが返された場合はそれを使用
-                let printerName = null;
+                // v1.3: printer_index でローカル設定を引く（printer_name は無視）
+                let printerIndex = Number(job.printer_index);
+                let printerName = config[`printer${printerIndex}`];
 
-                if (job.printer_name) {
-                    // サーバー指定のプリンタ名を使用
-                    printerName = job.printer_name;
-                    writeLog(`サーバー指定プリンタ: ${printerName} (routing: ${job.routing_type})`, 'info');
-                } else {
-                    // 従来方式: printer_indexからローカル設定を参照
-                    const printerIndex = Number(job.printer_index);
-                    printerName = config[`printer${printerIndex}`];
-
-                    // 指定番号のプリンタが未設定の場合、printer0にフォールバック
-                    if (!printerName && printerIndex !== 0) {
-                        printerName = config.printer0;
-                        writeLog(`プリンタ${printerIndex}が未設定、プリンタ0にフォールバック`, 'info');
-                    }
+                // 指定番号のプリンタが未設定の場合、printer0にフォールバック
+                if (!printerName && printerIndex !== 0) {
+                    writeLog(`プリンタ${printerIndex}が未設定、プリンタ0にフォールバック`, 'info');
+                    printerIndex = 0;
+                    printerName = config.printer0;
                 }
 
                 if (printerName) {
-                    writeLog(`印刷開始: ID=${job.file_id}, type=${job.print_type}, warehouse=${job.warehouse_id}, printer=${printerName}`, 'info');
+                    writeLog(
+                        `印刷開始: ID=${job.file_id}, type=${job.print_type}, ` +
+                        `warehouse=${job.warehouse_id}, slot=${printerIndex}, printer=${printerName}`,
+                        'info'
+                    );
 
                     let printSuccess = true;
                     let printError = null;
 
                     try {
-                        await printPdf(printerName, job.localPath);
+                        await printPdf(printerName, job.localPath, printerIndex);
                     } catch (err) {
                         printSuccess = false;
                         printError = err.message;
@@ -999,10 +1190,15 @@ ipcMain.handle('load-config', async () => JSON.parse(fs.readFileSync(configPath,
 ipcMain.handle('save-config', async (_e, newCfg) => {
     writeLog('設定を保存しています...', 'info');
 
-    // 設定を更新（clientIdは保持）
+    // 設定を更新（clientId と printerSettings は保持）
     const clientId = config.clientId;
+    const prevPrinterSettings = config.printerSettings || {};
     config = newCfg;
     config.clientId = clientId;
+    // newCfg に printerSettings が含まれていれば優先、なければ既存を維持
+    if (!config.printerSettings) {
+        config.printerSettings = prevPrinterSettings;
+    }
 
     // ファイルに保存
     if (!saveConfigToFile()) {
@@ -1030,6 +1226,32 @@ ipcMain.handle('get-app-version', () => {
 ipcMain.handle('download-sample-pdf', async () => {
     // S3からvouchers/sample.pdfをダウンロード
     return downloadFromS3('vouchers/sample.pdf');
+});
+
+// PDFファイル選択ダイアログ
+ipcMain.handle('pick-pdf-file', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender) || mainWindow;
+    const result = await dialog.showOpenDialog(win, {
+        title: 'テスト印刷するPDFを選択',
+        properties: ['openFile'],
+        filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        return null;
+    }
+    return result.filePaths[0];
+});
+
+// テスト印刷（モーダルで入力中の設定値で印刷）
+ipcMain.handle('test-print-with-settings', async (_e, { printerName, filePath, settings }) => {
+    if (!printerName) throw new Error('プリンタが指定されていません');
+    if (!filePath) throw new Error('PDFファイルが指定されていません');
+    if (!fs.existsSync(filePath)) throw new Error(`ファイルが見つかりません: ${filePath}`);
+
+    writeLog(`テスト印刷開始: printer=${printerName}, file=${path.basename(filePath)}`, 'info');
+    await printPdf(printerName, filePath, null, settings || null);
+    writeLog(`テスト印刷完了: printer=${printerName}`, 'success');
+    return true;
 });
 
 // プリンタリスト同期 (v2.2: POST /api/printer/warehouses/{id}/printers/sync)
