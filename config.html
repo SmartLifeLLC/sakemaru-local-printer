@@ -20,6 +20,12 @@
 <label>API トークン:
   <input type="password" id="cfg-apiToken" size="50"/>
 </label>
+<label>Slack WEBHOOK_URL:
+  <input type="password" id="cfg-slackWebhookUrl" size="50" placeholder="https://hooks.slack.com/services/..."/>
+</label>
+<label>Slack Name:
+  <input type="text" id="cfg-slackName" size="50" placeholder="Sakemaru Local Printer"/>
+</label>
 <label>倉庫 <small>(必須未設定の場合は全倉庫のジョブを取得)</small>:
   <select id="cfg-warehouseId">
     <option value="">選択</option>
@@ -33,22 +39,22 @@
   <legend>プリンタ設定</legend>
   <button id="btn-load-printers" type="button">プリンタ一覧を読み込み</button>
   <label>プリンタ 1:
-    <select id="cfg-printer1">
+    <select id="cfg-printer0">
       <option value="">（未設定）</option>
     </select>
   </label>
   <label>プリンタ 2:
-    <select id="cfg-printer2">
+    <select id="cfg-printer1">
       <option value="">（未設定）</option>
     </select>
   </label>
   <label>プリンタ 3:
-    <select id="cfg-printer3">
+    <select id="cfg-printer2">
       <option value="">（未設定）</option>
     </select>
   </label>
   <label>プリンタ 4:
-    <select id="cfg-printer4">
+    <select id="cfg-printer3">
       <option value="">（未設定）</option>
     </select>
   </label>

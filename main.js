@@ -61,22 +61,58 @@ function getUserConfigPath(profile) {
 function getTemplateConfigPath(profile) {
     return path.join(__dirname, `config-${profile}.json`);
 }
+function getLegacyConfigPath() {
+    return path.join(userDataPath, 'config.json');
+}
+
+function writeJsonFile(filePath, value) {
+    const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(value, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, filePath);
+}
+
+function readJsonObjectFile(filePath, label) {
+    try {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        if (!raw.trim()) {
+            throw new Error('JSON file is empty');
+        }
+
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('JSON root must be an object');
+        }
+
+        return parsed;
+    } catch (e) {
+        console.error(`Failed to read ${label}:`, e);
+        return null;
+    }
+}
+
+function backupInvalidJsonFile(filePath) {
+    try {
+        if (!fs.existsSync(filePath)) return;
+        const backupPath = `${filePath}.invalid-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        fs.copyFileSync(filePath, backupPath);
+        console.error(`Backed up invalid JSON file: ${backupPath}`);
+    } catch (e) {
+        console.error('Failed to back up invalid JSON file:', e);
+    }
+}
 
 function loadActiveProfile() {
-    try {
-        if (fs.existsSync(activeFilePath)) {
-            const obj = JSON.parse(fs.readFileSync(activeFilePath, 'utf-8'));
-            if (obj && VALID_PROFILES.includes(obj.profile)) return obj.profile;
-        }
-    } catch (e) {
-        console.error('Failed to read active.json:', e);
+    if (fs.existsSync(activeFilePath)) {
+        const obj = readJsonObjectFile(activeFilePath, 'active.json');
+        if (obj && VALID_PROFILES.includes(obj.profile)) return obj.profile;
     }
+
     return 'prod';
 }
 
 function saveActiveProfile(profile) {
     try {
-        fs.writeFileSync(activeFilePath, JSON.stringify({ profile }, null, 2), 'utf-8');
+        writeJsonFile(activeFilePath, { profile });
         return true;
     } catch (e) {
         console.error('Failed to write active.json:', e);
@@ -99,6 +135,8 @@ const defaultConfig = {
     apiHost: '',
     apiToken: '',
     warehouseId: '', // 倉庫ID（オプション、指定すると該当倉庫の印刷ジョブのみ取得）
+    slackWebhookUrl: '',
+    slackName: 'Sakemaru Local Printer',
     printer0: '',
     printer1: '',
     printer2: '',
@@ -109,6 +147,16 @@ const defaultConfig = {
     printer7: '',
     printer8: '',
     printer9: '',
+    printerKey0: '',
+    printerKey1: '',
+    printerKey2: '',
+    printerKey3: '',
+    printerKey4: '',
+    printerKey5: '',
+    printerKey6: '',
+    printerKey7: '',
+    printerKey8: '',
+    printerKey9: '',
     printMethod: 'pdf-to-printer', // 'pdf-to-printer' or 'sumatra-direct'
     sumatraPdfPath: 'C:\\Program Files\\SumatraPDF\\SumatraPDF.exe',
     printerSettings: {}, // プリンタ別印刷設定 { [printerName]: { orientation, paperSize, offsetX, offsetY } }
@@ -122,33 +170,79 @@ const defaultConfig = {
 
 // プリンタスロット数
 const MAX_PRINTERS = 10;
+const PRINTED_PDF_RETENTION_MS = 60 * 60 * 1000;
+const S3_DOWNLOAD_MAX_RETRIES = 3;
+const S3_DOWNLOAD_RETRY_DELAY_MS = 5000;
+
+function createDefaultConfig() {
+    return JSON.parse(JSON.stringify(defaultConfig));
+}
+
+function mergeWithDefaultConfig(cfg) {
+    const base = createDefaultConfig();
+    return {
+        ...base,
+        ...cfg,
+        s3: {
+            ...base.s3,
+            ...(cfg.s3 || {})
+        }
+    };
+}
 
 // 指定プロファイルの設定をロードする（無ければテンプレートからコピー、なお無ければデフォルト）
 function loadConfigForProfile(profile) {
     const userPath = getUserConfigPath(profile);
     const tmplPath = getTemplateConfigPath(profile);
-    let cfg;
+    const legacyPath = getLegacyConfigPath();
+    let cfg = null;
+    let shouldWriteUserConfig = false;
 
     if (fs.existsSync(userPath)) {
-        cfg = JSON.parse(fs.readFileSync(userPath, 'utf-8'));
-        console.log(`Configuration loaded from user file (${profile}):`, userPath);
-    } else if (fs.existsSync(tmplPath)) {
-        // テンプレートをコピー（テンプレ自体は変更不可、これは初回の種だけ）
-        cfg = JSON.parse(fs.readFileSync(tmplPath, 'utf-8'));
-        console.log(`Configuration seeded from template (${profile}):`, tmplPath);
-        fs.writeFileSync(userPath, JSON.stringify(cfg, null, 2), 'utf-8');
-        console.log(`Saved initial config (${profile}) to:`, userPath);
-    } else {
-        cfg = { ...defaultConfig };
-        console.log(`Using default configuration (no template found for ${profile})`);
-        fs.writeFileSync(userPath, JSON.stringify(cfg, null, 2), 'utf-8');
+        cfg = readJsonObjectFile(userPath, `user config (${profile})`);
+        if (cfg) {
+            console.log(`Configuration loaded from user file (${profile}):`, userPath);
+        } else {
+            backupInvalidJsonFile(userPath);
+            shouldWriteUserConfig = true;
+        }
     }
+
+    if (!cfg && fs.existsSync(tmplPath)) {
+        // テンプレートをコピー（テンプレ自体は変更不可、これは初回の種だけ）
+        cfg = readJsonObjectFile(tmplPath, `template config (${profile})`);
+        if (cfg) {
+            console.log(`Configuration seeded from template (${profile}):`, tmplPath);
+            shouldWriteUserConfig = true;
+        }
+    }
+
+    if (!cfg && profile === 'prod' && fs.existsSync(legacyPath)) {
+        cfg = readJsonObjectFile(legacyPath, 'legacy config.json');
+        if (cfg) {
+            console.log(`Configuration migrated from legacy config.json (${profile}):`, legacyPath);
+            shouldWriteUserConfig = true;
+        }
+    }
+
+    if (!cfg) {
+        cfg = createDefaultConfig();
+        console.log(`Using default configuration (no template found for ${profile})`);
+        shouldWriteUserConfig = true;
+    }
+
+    cfg = mergeWithDefaultConfig(cfg);
 
     // clientId が無ければ生成して書き戻し（プロファイルごとに独立した clientId）
     if (!cfg.clientId) {
         cfg.clientId = generateClientId();
-        fs.writeFileSync(userPath, JSON.stringify(cfg, null, 2), 'utf-8');
+        shouldWriteUserConfig = true;
         console.log(`Generated new client ID for ${profile}:`, cfg.clientId);
+    }
+
+    if (shouldWriteUserConfig) {
+        writeJsonFile(userPath, cfg);
+        console.log(`Saved config (${profile}) to:`, userPath);
     }
 
     return cfg;
@@ -178,10 +272,40 @@ function buildApiHeaders() {
     return headers;
 }
 
+function normalizePrinterKey(value) {
+    return String(value || '').trim();
+}
+
+function getConfiguredPrinterKeyRoutes() {
+    const routes = [];
+
+    for (let i = 0; i < MAX_PRINTERS; i++) {
+        const printerKey = normalizePrinterKey(config[`printerKey${i}`]);
+        const printerName = config[`printer${i}`];
+        if (printerKey && printerName) {
+            routes.push({ printerKey, printerIndex: i, printerName });
+        }
+    }
+
+    return routes;
+}
+
+function getConfiguredPrinterKeys() {
+    return [...new Set(getConfiguredPrinterKeyRoutes().map(route => route.printerKey))];
+}
+
+function findPrinterRouteByKey(printerKey) {
+    const normalizedKey = normalizePrinterKey(printerKey);
+    if (!normalizedKey) return null;
+
+    return getConfiguredPrinterKeyRoutes()
+        .find(route => route.printerKey === normalizedKey) || null;
+}
+
 // 設定を保存する関数
 function saveConfigToFile() {
     try {
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        writeJsonFile(configPath, config);
         console.log('Configuration saved to:', configPath);
         return true;
     } catch (err) {
@@ -209,6 +333,40 @@ function getLogFilePath() {
     return path.join(logsDir, `log_${today}.txt`);
 }
 
+async function sendSlackErrorNotification(message, timestamp) {
+    try {
+        const webhookUrl = String(config.slackWebhookUrl || '').trim();
+        if (!webhookUrl) return;
+
+        const slackName = String(config.slackName || '').trim() || 'Sakemaru Local Printer';
+        const text = [
+            `[${slackName}] Local Printer Error`,
+            `time: ${timestamp}`,
+            `profile: ${activeProfile}`,
+            `client_uuid: ${config.clientId || '-'}`,
+            `api_host: ${config.apiHost || '-'}`,
+            '',
+            String(message || '').slice(0, 3000)
+        ].join('\n');
+
+        const res = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: slackName,
+                text
+            }),
+            signal: AbortSignal.timeout(5000)
+        });
+
+        if (!res.ok) {
+            console.error(`Slack error notification failed: HTTP ${res.status} ${res.statusText}`);
+        }
+    } catch (err) {
+        console.error('Slack error notification failed:', err);
+    }
+}
+
 // ログをファイルに書き込み、UIにも送信
 function writeLog(message, type = 'info') {
     const timestamp = new Date().toISOString();
@@ -229,6 +387,41 @@ function writeLog(message, type = 'info') {
             type: type
         });
     }
+
+    if (type === 'error') {
+        sendSlackErrorNotification(message, timestamp);
+    }
+}
+
+function scheduleDownloadedPdfDeletion(filePath, context = '') {
+    if (!filePath) return;
+
+    const minutes = Math.round(PRINTED_PDF_RETENTION_MS / 60000);
+    const fileName = path.basename(filePath);
+    writeLog(
+        `PDF一時ファイルを${minutes}分後に削除します: ${fileName}${context ? ` (${context})` : ''}`,
+        'info'
+    );
+
+    const timer = setTimeout(() => {
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                writeLog(`PDF一時ファイルを削除しました: ${fileName}`, 'info');
+            }
+        } catch (err) {
+            console.error('Failed to delete delayed PDF file:', err);
+            writeLog(`PDF一時ファイル削除失敗: ${fileName} - ${err.message}`, 'error');
+        }
+    }, PRINTED_PDF_RETENTION_MS);
+
+    if (typeof timer.unref === 'function') {
+        timer.unref();
+    }
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ローカルIP取得
@@ -421,7 +614,7 @@ async function printPdf(printerName, localFilePath, printerIndex = null, overrid
 
     const cleanupTempProcessed = () => {
         if (tempProcessedPath) {
-            try { fs.unlinkSync(tempProcessedPath); } catch (_) {}
+            scheduleDownloadedPdfDeletion(tempProcessedPath, 'processed print settings');
         }
     };
 
@@ -523,47 +716,67 @@ async function printPdf(printerName, localFilePath, printerIndex = null, overrid
 
 // S3ダウンロード
 async function downloadFromS3(s3Key) {
-    try {
-        console.log(`S3ダウンロード開始: bucket=${config.s3.bucket}, key=${s3Key}`);
-        const s3 = new S3Client({ region: config.s3.region, credentials: config.s3 });
-        const cmd = new GetObjectCommand({ Bucket: config.s3.bucket, Key: s3Key });
-        const res = await s3.send(cmd);
-        const tmp = path.join(app.getPath('temp'), `${crypto.randomUUID()}_${path.basename(s3Key)}`);
-        const ws = fs.createWriteStream(tmp);
-        await new Promise((ok, ng) => res.Body.pipe(ws).on('finish', ok).on('error', ng));
-        console.log(`S3ダウンロード完了: ${tmp}`);
-        return tmp;
-    } catch (error) {
-        console.error(`S3ダウンロードエラー: bucket=${config.s3.bucket}, key=${s3Key}`, error);
-        throw new Error(`S3ダウンロード失敗 (${s3Key}): ${error.message}`);
-    }
-}
+    let lastError = null;
+    const totalAttempts = S3_DOWNLOAD_MAX_RETRIES + 1;
 
-// 並列ダウンロード処理（最大4つ並列）
-async function downloadFilesInParallel(jobs) {
-    const MAX_CONCURRENT = 4;
-    const results = [];
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+        let tmp = null;
+        let ws = null;
 
-    // ダウンロード処理を実行する関数
-    async function downloadJob(job) {
         try {
-            const localPath = await downloadFromS3(job.file_url);
-            return { ...job, localPath, success: true };
-        } catch (err) {
-            console.error(`Download failed for ${job.file_url}:`, err);
-            writeLog(`ダウンロード失敗: ${job.file_url} - ${err.message}`, 'error');
-            return { ...job, localPath: null, success: false, error: err.message };
+            console.log(`S3ダウンロード開始 (${attempt}/${totalAttempts}): bucket=${config.s3.bucket}, key=${s3Key}`);
+            const s3 = new S3Client({ region: config.s3.region, credentials: config.s3 });
+            const cmd = new GetObjectCommand({ Bucket: config.s3.bucket, Key: s3Key });
+            const res = await s3.send(cmd);
+            tmp = path.join(app.getPath('temp'), `${crypto.randomUUID()}_${path.basename(s3Key)}`);
+            ws = fs.createWriteStream(tmp);
+
+            await new Promise((ok, ng) => {
+                if (!res.Body || typeof res.Body.pipe !== 'function') {
+                    ng(new Error('S3 response body is empty'));
+                    return;
+                }
+
+                res.Body.on('error', ng);
+                ws.on('error', ng);
+                ws.on('finish', ok);
+                res.Body.pipe(ws);
+            });
+
+            console.log(`S3ダウンロード完了: ${tmp}`);
+            return tmp;
+        } catch (error) {
+            lastError = error;
+
+            if (ws && !ws.destroyed) {
+                try {
+                    ws.destroy();
+                } catch (_) {
+                    // リトライ時は次の試行を優先する
+                }
+            }
+
+            if (tmp && fs.existsSync(tmp)) {
+                try {
+                    fs.unlinkSync(tmp);
+                } catch (_) {
+                    // リトライ時の一時ファイル削除失敗は次の試行を優先する
+                }
+            }
+
+            console.error(`S3ダウンロードエラー (${attempt}/${totalAttempts}): bucket=${config.s3.bucket}, key=${s3Key}`, error);
+
+            if (attempt <= S3_DOWNLOAD_MAX_RETRIES) {
+                writeLog(
+                    `S3ダウンロード失敗: ${s3Key} - ${error.message}。5秒後に再試行します (${attempt}/${S3_DOWNLOAD_MAX_RETRIES})`,
+                    'error'
+                );
+                await delay(S3_DOWNLOAD_RETRY_DELAY_MS);
+            }
         }
     }
 
-    // 最大4つずつ並列でダウンロード
-    for (let i = 0; i < jobs.length; i += MAX_CONCURRENT) {
-        const batch = jobs.slice(i, i + MAX_CONCURRENT);
-        const batchResults = await Promise.all(batch.map(downloadJob));
-        results.push(...batchResults);
-    }
-
-    return results;
+    throw new Error(`S3ダウンロード失敗 (${s3Key}): ${lastError?.message || '不明なエラー'}`);
 }
 
 // ポーリングタスク
@@ -572,14 +785,24 @@ async function pollTask() {
         const ip = getLocalIp();
         const headers = buildApiHeaders();
 
-        // APIエンドポイントを構築
-        let apiUrl = `https://${config.apiHost}/api/printer/polling`;
+        const printerKeys = getConfiguredPrinterKeys();
+        const pollingEndpoint = printerKeys.length > 0 ? 'polling-by-key' : 'polling';
+        const pollingUrl = new URL(`https://${config.apiHost}/api/printer/${pollingEndpoint}`);
 
         // warehouse_idが設定されている場合はクエリパラメータとして追加 (v2.0仕様)
         if (config.warehouseId) {
-            apiUrl += `?warehouse_id=${parseInt(config.warehouseId)}`;
+            pollingUrl.searchParams.set('warehouse_id', parseInt(config.warehouseId));
         }
+
+        printerKeys.forEach(printerKey => {
+            pollingUrl.searchParams.append('printer_keys[]', printerKey);
+        });
+
+        const apiUrl = pollingUrl.toString();
         console.log('Polling API:', apiUrl);
+        if (printerKeys.length > 0) {
+            console.log('Polling printer keys:', printerKeys);
+        }
         console.log('Request headers:', headers);
 
         const res = await fetch(apiUrl, {
@@ -664,6 +887,7 @@ async function pollTask() {
                     file_url: item.file_path,
                     printer_driver_id: item.printer_driver_id || null,
                     printer_index: printerIndex,
+                    printer_key: normalizePrinterKey(item.printer_key ?? item.printer_drivers?.printer_key),
                     routing_type: item.routing_type || 'default',
                     warehouse_id: item.warehouse_id || item.printer_drivers?.warehouse_id,
                     buyer_id: item.buyer_id,
@@ -675,33 +899,52 @@ async function pollTask() {
             // order順にソート
             const sortedJobs = [...jobs].sort((a, b) => a.order - b.order);
 
-            // 並列ダウンロード（最大4つずつ）
+            // order順に1件ずつダウンロードして印刷を実行
             if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'downloading', count: sortedJobs.length });
-            writeLog(`${sortedJobs.length}個のファイルをダウンロード中...`, 'info');
-            const downloadedJobs = await downloadFilesInParallel(sortedJobs);
+            writeLog(`${sortedJobs.length}個のファイルを1件ずつダウンロードして印刷します`, 'info');
 
-            // ダウンロード結果をサマリー表示
-            const successCount = downloadedJobs.filter(j => j.success).length;
-            const failCount = downloadedJobs.filter(j => !j.success).length;
-            if (failCount > 0) {
-                writeLog(`ダウンロード結果: 成功=${successCount}, 失敗=${failCount}`, 'error');
-            } else {
-                writeLog(`ダウンロード完了: ${successCount}個のファイル`, 'success');
-            }
+            let downloadSuccessCount = 0;
+            let downloadFailCount = 0;
 
-            // order順に印刷を実行
-            for (const job of downloadedJobs) {
-                if (!job.success) {
-                    writeLog(`印刷スキップ: ID=${job.file_id} (ダウンロード失敗: ${job.error})`, 'error');
+            for (const job of sortedJobs) {
+                try {
+                    if (statusWindow) {
+                        statusWindow.webContents.send('poll-status', {
+                            status: 'downloading',
+                            count: sortedJobs.length,
+                            file_id: job.file_id
+                        });
+                    }
+                    job.localPath = await downloadFromS3(job.file_url);
+                    downloadSuccessCount++;
+                } catch (err) {
+                    downloadFailCount++;
+                    console.error(`Download failed for ${job.file_url}:`, err);
+                    writeLog(`印刷スキップ: ID=${job.file_id} (ダウンロード失敗: ${err.message})`, 'error');
                     continue;
                 }
 
-                // v1.3: printer_index でローカル設定を引く（printer_name は無視）
+                // printer_key がある場合は端末ごとのスロット差を吸収するためキーで引く。
+                // キーなしの旧ジョブは従来通り printer_index を使う。
                 let printerIndex = Number(job.printer_index);
-                let printerName = config[`printer${printerIndex}`];
+                let printerName = null;
+
+                if (job.printer_key) {
+                    const route = findPrinterRouteByKey(job.printer_key);
+                    if (route) {
+                        printerIndex = route.printerIndex;
+                        printerName = route.printerName;
+                    } else {
+                        writeLog(`ID ${job.file_id} の printer_key=${job.printer_key} に対応するローカルプリンタが設定されていません`, 'error');
+                        scheduleDownloadedPdfDeletion(job.localPath, `job_id=${job.file_id}, missing printer_key`);
+                        continue;
+                    }
+                } else {
+                    printerName = config[`printer${printerIndex}`];
+                }
 
                 // 指定番号のプリンタが未設定の場合、printer0にフォールバック
-                if (!printerName && printerIndex !== 0) {
+                if (!job.printer_key && !printerName && printerIndex !== 0) {
                     writeLog(`プリンタ${printerIndex}が未設定、プリンタ0にフォールバック`, 'info');
                     printerIndex = 0;
                     printerName = config.printer0;
@@ -710,7 +953,7 @@ async function pollTask() {
                 if (printerName) {
                     writeLog(
                         `印刷開始: ID=${job.file_id}, type=${job.print_type}, ` +
-                        `warehouse=${job.warehouse_id}, slot=${printerIndex}, printer=${printerName}`,
+                        `warehouse=${job.warehouse_id}, slot=${printerIndex}, key=${job.printer_key || '-'}, printer=${printerName}`,
                         'info'
                     );
 
@@ -725,12 +968,7 @@ async function pollTask() {
                         writeLog(`印刷エラー: ID=${job.file_id}, error=${err.message}`, 'error');
                     }
 
-                    // 一時ファイル削除
-                    try {
-                        fs.unlinkSync(job.localPath);
-                    } catch (err) {
-                        console.error('Failed to delete temp file:', err);
-                    }
+                    scheduleDownloadedPdfDeletion(job.localPath, `job_id=${job.file_id}`);
 
                     // 印刷完了報告API (v2.2: POST /api/printer/jobs/{id}/complete)
                     try {
@@ -773,7 +1011,14 @@ async function pollTask() {
                     writeLog(`印刷完了: ID=${job.file_id}`, 'success');
                 } else {
                     writeLog(`ID ${job.file_id} のプリンタが設定されていません`, 'error');
+                    scheduleDownloadedPdfDeletion(job.localPath, `job_id=${job.file_id}, no printer`);
                 }
+            }
+
+            if (downloadFailCount > 0) {
+                writeLog(`ダウンロード結果: 成功=${downloadSuccessCount}, 失敗=${downloadFailCount}`, 'error');
+            } else {
+                writeLog(`ダウンロード完了: ${downloadSuccessCount}個のファイル`, 'success');
             }
 
             writeLog('すべての印刷ジョブが完了しました', 'success');
@@ -791,7 +1036,7 @@ async function pollTask() {
             if (printerName) {
                 const localPdf = await downloadFromS3(data.file);
                 await printPdf(printerName, localPdf);
-                fs.unlinkSync(localPdf);
+                scheduleDownloadedPdfDeletion(localPdf, 'legacy printer_number');
                 if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'printed', printer: printerName });
             } else {
                 throw new Error('No printer configured');
@@ -801,7 +1046,7 @@ async function pollTask() {
         else if (data && Array.isArray(data.printer) && data.file) {
             const localPdf = await downloadFromS3(data.file);
             for (const name of data.printer) await printPdf(name, localPdf);
-            fs.unlinkSync(localPdf);
+            scheduleDownloadedPdfDeletion(localPdf, 'legacy printer array');
             if (statusWindow) statusWindow.webContents.send('poll-status', { status: 'printed' });
         }
     } catch (err) {
@@ -878,13 +1123,6 @@ function createMainWindow() {
         }
     });
     mainWindow.loadFile('index.html');
-
-    // 開発時のみ DevTools を起動時に自動オープン
-    if (!app.isPackaged) {
-        mainWindow.webContents.once('did-finish-load', () => {
-            mainWindow.webContents.openDevTools({ mode: 'detach' });
-        });
-    }
 
     // 開発時のみ DevTools を有効化（F12 で開閉、Ctrl+Shift+I でも開閉）
     if (!app.isPackaged) {
@@ -1278,14 +1516,18 @@ ipcMain.handle('get-printers', async (e) => {
     }
 });
 ipcMain.handle('print-to-printer', (_e, args) => printPdf(args.printerName, args.filePath));
-ipcMain.handle('load-config', async () => JSON.parse(fs.readFileSync(configPath, 'utf-8')));
+ipcMain.handle('load-config', async () => {
+    config = loadConfigForProfile(activeProfile);
+    return config;
+});
 ipcMain.handle('save-config', async (_e, newCfg) => {
     writeLog('設定を保存しています...', 'info');
 
-    // 設定を更新（clientId と printerSettings は保持）
-    const clientId = config.clientId;
-    const prevPrinterSettings = config.printerSettings || {};
-    config = newCfg;
+    // 設定を更新（既存キー・未知の設定値を保持しつつ、入力された項目だけ上書き）
+    const prevConfig = config || {};
+    const clientId = prevConfig.clientId;
+    const prevPrinterSettings = prevConfig.printerSettings || {};
+    config = { ...prevConfig, ...newCfg };
     config.clientId = clientId;
     // newCfg に printerSettings が含まれていれば優先、なければ既存を維持
     if (!config.printerSettings) {

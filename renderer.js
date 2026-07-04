@@ -195,6 +195,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     <select id="printer${i}">
                         <option value="">（未設定）</option>
                     </select>
+                    <input type="text" id="printerKey${i}" class="printer-key-input" placeholder="printer-key" maxlength="100" autocomplete="off" />
                     <button type="button" class="printer-settings-btn" data-printer-slot="${i}" title="印刷設定" disabled>⚙️</button>
                 `;
                 grid.appendChild(slot);
@@ -207,6 +208,13 @@ window.addEventListener('DOMContentLoaded', () => {
                     select.addEventListener('change', () => {
                         checkDuplicatePrinters();
                         updateSettingsButtonState(i);
+                    });
+                }
+
+                const keyInput = document.getElementById(`printerKey${i}`);
+                if (keyInput) {
+                    keyInput.addEventListener('input', () => {
+                        checkDuplicatePrinterKeys();
                     });
                 }
             }
@@ -490,6 +498,36 @@ window.addEventListener('DOMContentLoaded', () => {
             return true; // 常に保存可能
         }
 
+        function checkDuplicatePrinterKeys() {
+            const selectedKeys = [];
+            const duplicates = new Set();
+
+            for (let i = 0; i < MAX_PRINTERS; i++) {
+                const input = document.getElementById(`printerKey${i}`);
+                const printerKey = input ? input.value.trim() : '';
+                if (printerKey) {
+                    if (selectedKeys.includes(printerKey)) {
+                        duplicates.add(printerKey);
+                    } else {
+                        selectedKeys.push(printerKey);
+                    }
+                }
+            }
+
+            const warning = document.getElementById('printer-key-duplicate-warning');
+            if (warning) {
+                warning.style.display = duplicates.size > 0 ? 'block' : 'none';
+            }
+
+            for (let i = 0; i < MAX_PRINTERS; i++) {
+                const input = document.getElementById(`printerKey${i}`);
+                if (!input) continue;
+                input.style.borderColor = duplicates.has(input.value.trim()) ? '#d32f2f' : '#ddd';
+            }
+
+            return duplicates.size === 0;
+        }
+
         // プリンタ一覧を読み込んで設定を反映する関数
         async function loadPrintersAndApplyConfig(showAlert = false) {
             try {
@@ -539,6 +577,11 @@ window.addEventListener('DOMContentLoaded', () => {
                         sel.value = savedValue;
                         console.log(`Set printer${i} to: ${savedValue}`);
                     }
+
+                    const keyInput = document.getElementById(`printerKey${i}`);
+                    if (keyInput) {
+                        keyInput.value = cfg[`printerKey${i}`] || '';
+                    }
                 }
 
                 // テスト印刷用のselectも更新
@@ -555,6 +598,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
                 // 重複チェック
                 checkDuplicatePrinters();
+                checkDuplicatePrinterKeys();
 
                 // 設定ボタンの状態を反映
                 for (let i = 0; i < MAX_PRINTERS; i++) updateSettingsButtonState(i);
@@ -585,6 +629,10 @@ window.addEventListener('DOMContentLoaded', () => {
         document.getElementById('btn-save-printers').addEventListener('click', async () => {
             // 重複は警告のみで保存ブロックしない
             checkDuplicatePrinters();
+            if (!checkDuplicatePrinterKeys()) {
+                alert('同じプリンターキーが複数スロットに設定されています。プリンターキーは一意にしてください。');
+                return;
+            }
 
             try {
                 const cfg = await window.electronAPI.loadConfig();
@@ -592,7 +640,9 @@ window.addEventListener('DOMContentLoaded', () => {
                 // 10個のプリンタ設定を保存
                 for (let i = 0; i < MAX_PRINTERS; i++) {
                     const select = document.getElementById(`printer${i}`);
+                    const keyInput = document.getElementById(`printerKey${i}`);
                     cfg[`printer${i}`] = select ? select.value : '';
+                    cfg[`printerKey${i}`] = keyInput ? keyInput.value.trim() : '';
                 }
 
                 // ローカルに保存
@@ -604,10 +654,12 @@ window.addEventListener('DOMContentLoaded', () => {
                     const printers = [];
                     for (let i = 0; i < MAX_PRINTERS; i++) {
                         const printerName = cfg[`printer${i}`];
+                        const printerKey = cfg[`printerKey${i}`] || '';
                         if (printerName) {
                             printers.push({
                                 printer_index: i,
                                 name: printerName,
+                                printer_key: printerKey || null,
                                 is_default: printers.length === 0 // 最初に登場したスロットをデフォルト
                             });
                         }
@@ -672,6 +724,8 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-apiHost').value = cfg.apiHost;
             document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
             document.getElementById('cfg-clientId').value = cfg.clientId || '';
+            document.getElementById('cfg-slackWebhookUrl').value = cfg.slackWebhookUrl || '';
+            document.getElementById('cfg-slackName').value = cfg.slackName || '';
             document.getElementById('cfg-warehouseId').value = cfg.warehouseId || '';
             document.getElementById('cfg-s3-bucket').value = cfg.s3.bucket || '';
             document.getElementById('cfg-s3-region').value = cfg.s3.region || '';
@@ -750,6 +804,8 @@ window.addEventListener('DOMContentLoaded', () => {
             document.getElementById('cfg-apiHost').value = cfg.apiHost;
             document.getElementById('cfg-apiToken').value = cfg.apiToken || '';
             document.getElementById('cfg-clientId').value = cfg.clientId || '';
+            document.getElementById('cfg-slackWebhookUrl').value = cfg.slackWebhookUrl || '';
+            document.getElementById('cfg-slackName').value = cfg.slackName || '';
             document.getElementById('cfg-warehouseId').value = cfg.warehouseId || '';
             document.getElementById('cfg-s3-bucket').value = cfg.s3.bucket;
             document.getElementById('cfg-s3-region').value = cfg.s3.region;
@@ -927,6 +983,8 @@ window.addEventListener('DOMContentLoaded', () => {
                 apiHost: document.getElementById('cfg-apiHost').value,
                 apiToken: document.getElementById('cfg-apiToken').value,
                 warehouseId: document.getElementById('cfg-warehouseId').value,
+                slackWebhookUrl: document.getElementById('cfg-slackWebhookUrl').value,
+                slackName: document.getElementById('cfg-slackName').value,
                 printer0: currentCfg.printer0 || '',
                 printer1: currentCfg.printer1 || '',
                 printer2: currentCfg.printer2 || '',
@@ -937,6 +995,16 @@ window.addEventListener('DOMContentLoaded', () => {
                 printer7: currentCfg.printer7 || '',
                 printer8: currentCfg.printer8 || '',
                 printer9: currentCfg.printer9 || '',
+                printerKey0: currentCfg.printerKey0 || '',
+                printerKey1: currentCfg.printerKey1 || '',
+                printerKey2: currentCfg.printerKey2 || '',
+                printerKey3: currentCfg.printerKey3 || '',
+                printerKey4: currentCfg.printerKey4 || '',
+                printerKey5: currentCfg.printerKey5 || '',
+                printerKey6: currentCfg.printerKey6 || '',
+                printerKey7: currentCfg.printerKey7 || '',
+                printerKey8: currentCfg.printerKey8 || '',
+                printerKey9: currentCfg.printerKey9 || '',
                 printMethod: document.getElementById('cfg-printMethod').value,
                 sumatraPdfPath: document.getElementById('cfg-sumatraPdfPath').value,
                 printerSettings: currentCfg.printerSettings || {},
@@ -989,6 +1057,8 @@ window.addEventListener('DOMContentLoaded', () => {
             pollInterval:       document.getElementById('cfg-pollInterval'),
             apiHost:            document.getElementById('cfg-apiHost'),
             apiToken:           document.getElementById('cfg-apiToken'),
+            slackWebhookUrl:    document.getElementById('cfg-slackWebhookUrl'),
+            slackName:          document.getElementById('cfg-slackName'),
             warehouseId:        document.getElementById('cfg-warehouseId'),
             loadWarehousesBtn:  document.getElementById('btn-load-warehouses'),
             printer0:           document.getElementById('cfg-printer0'),
@@ -1155,6 +1225,8 @@ window.addEventListener('DOMContentLoaded', () => {
             elems.pollInterval.value       = cfg.pollInterval;
             elems.apiHost.value            = cfg.apiHost;
             elems.apiToken.value           = cfg.apiToken || '';
+            elems.slackWebhookUrl.value    = cfg.slackWebhookUrl || '';
+            elems.slackName.value          = cfg.slackName || '';
             elems.warehouseId.value        = cfg.warehouseId || '';
             elems.s3.bucket.value          = cfg.s3.bucket;
             elems.s3.region.value          = cfg.s3.region;
@@ -1207,6 +1279,8 @@ window.addEventListener('DOMContentLoaded', () => {
                 pollInterval:   Number(elems.pollInterval.value),
                 apiHost:        elems.apiHost.value,
                 apiToken:       elems.apiToken.value,
+                slackWebhookUrl: elems.slackWebhookUrl.value,
+                slackName:      elems.slackName.value,
                 warehouseId:    elems.warehouseId.value,
                 printer0:       elems.printer0.value,
                 printer1:       elems.printer1.value,

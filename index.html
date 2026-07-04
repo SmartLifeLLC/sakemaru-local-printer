@@ -50,11 +50,21 @@
             border-radius: 3px;
         }
         .printer-slot select {
-            flex: 1;
+            flex: 1 1 150px;
+            min-width: 0;
             margin: 0 !important;
             padding: 2px 4px !important;
             font-size: 12px;
             border-width: 1px;
+            border-radius: 0;
+        }
+        .printer-key-input {
+            flex: 0 0 110px;
+            min-width: 80px;
+            margin: 0 !important;
+            padding: 2px 4px !important;
+            font-size: 12px;
+            border: 1px solid #ddd;
             border-radius: 0;
         }
         .printer-settings-btn {
@@ -507,6 +517,9 @@
             <div id="printer-duplicate-warning" style="display: none; color: #555; font-size: 12px; margin-top: 5px;">
                 ℹ️ 同じプリンタが複数のスロットに割当てられています。スロットごとに別設定で印刷できます。
             </div>
+            <div id="printer-key-duplicate-warning" style="display: none; color: #d32f2f; font-size: 12px; margin-top: 5px;">
+                同じプリンターキーが複数スロットに設定されています。キーは1スロットにつき一意にしてください。
+            </div>
         </div>
 
         <div class="section">
@@ -547,6 +560,14 @@
                 <div>
                     <label>クライアントID:</label>
                     <input type="text" id="cfg-clientId" readonly style="background: #f0f0f0; color: #666;" />
+                </div>
+                <div>
+                    <label>Slack WEBHOOK_URL:</label>
+                    <input type="password" id="cfg-slackWebhookUrl" placeholder="https://hooks.slack.com/services/..." />
+                </div>
+                <div>
+                    <label>Slack Name:</label>
+                    <input type="text" id="cfg-slackName" placeholder="Sakemaru Local Printer" />
                 </div>
             </div>
             <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px;">
