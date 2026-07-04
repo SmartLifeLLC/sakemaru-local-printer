@@ -1,6 +1,12 @@
 /dist
 /node_modules
 config.json
+config-*.json
 .DS_Store
 .idea
 *.pdf
+
+# Junk / local state
+nul
+.claude/scheduled_tasks.lock
+.claude/*.lock

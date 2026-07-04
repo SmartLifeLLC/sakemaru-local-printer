@@ -5,7 +5,15 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(npm start)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(npm install *)",
+      "Bash(node -e \"require\\('./main.js'\\)\")",
+      "Bash(node --check main.js)",
+      "Bash(node --check renderer.js)",
+      "Bash(node --check preload.js)",
+      "Bash(node *)",
+      "Bash(git reset *)",
+      "Bash(git check-ignore *)"
     ],
     "deny": [],
     "ask": []
