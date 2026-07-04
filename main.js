@@ -528,7 +528,7 @@ async function downloadFromS3(s3Key) {
         const s3 = new S3Client({ region: config.s3.region, credentials: config.s3 });
         const cmd = new GetObjectCommand({ Bucket: config.s3.bucket, Key: s3Key });
         const res = await s3.send(cmd);
-        const tmp = path.join(app.getPath('temp'), path.basename(s3Key));
+        const tmp = path.join(app.getPath('temp'), `${crypto.randomUUID()}_${path.basename(s3Key)}`);
         const ws = fs.createWriteStream(tmp);
         await new Promise((ok, ng) => res.Body.pipe(ws).on('finish', ok).on('error', ng));
         console.log(`S3ダウンロード完了: ${tmp}`);
@@ -584,7 +584,8 @@ async function pollTask() {
 
         const res = await fetch(apiUrl, {
             method: 'GET',
-            headers: headers
+            headers: headers,
+            signal: AbortSignal.timeout(15000)
         });
 
         console.log('API Response Status:', res.status, res.statusText);
@@ -737,11 +738,13 @@ async function pollTask() {
                         const completeBody = printSuccess
                             ? {
                                 status: 'success',
+                                print_type: job.print_type,
                                 printed_at: new Date().toISOString(),
                                 printer_name: printerName
                             }
                             : {
                                 status: 'error',
+                                print_type: job.print_type,
                                 error_message: printError
                             };
 
